@@ -66,6 +66,9 @@ type Config struct {
 	} `json:"redact"`
 }
 
+// ExpandTilde 는 선행 ~ 를 사용자 홈 디렉토리로 확장한다(컨텍스트 신호원 등에서 재사용).
+func ExpandTilde(p string) string { return expandTilde(p) }
+
 func expandTilde(p string) string {
 	if p == "~" {
 		if home, err := os.UserHomeDir(); err == nil {

@@ -135,6 +135,98 @@ func splitTags(csv string) []string {
 	return strings.Split(csv, ",")
 }
 
+// PathMtimes 는 인덱스에 적재된 모든 노트의 path→mtime 맵을 반환한다.
+// 증분 동기화(Sync)가 변경/삭제 노트를 판정하는 기준이다.
+func (d *DB) PathMtimes() (map[string]int64, error) {
+	rows, err := d.sql.Query(`SELECT path, mtime FROM notes`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	m := make(map[string]int64)
+	for rows.Next() {
+		var p string
+		var mt int64
+		if err := rows.Scan(&p, &mt); err != nil {
+			return nil, err
+		}
+		m[p] = mt
+	}
+	return m, rows.Err()
+}
+
+// scanEntries 는 (path,title,type,domain,tags,date,summary) 순 행을 IndexEntry 로 읽는다.
+func scanEntries(rows *sql.Rows) ([]IndexEntry, error) {
+	defer rows.Close()
+	var out []IndexEntry
+	for rows.Next() {
+		var e IndexEntry
+		var tags string
+		if err := rows.Scan(&e.Path, &e.Title, &e.Type, &e.Domain, &tags, &e.Date, &e.Summary); err != nil {
+			return nil, err
+		}
+		e.Tags = splitTags(tags)
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// Runbooks 는 type='runbook' 노트를 반환한다(name 지정 시 title/path/tags LIKE 필터).
+func (d *DB) Runbooks(name string, limit int) ([]IndexEntry, error) {
+	q := `SELECT path,title,type,domain,tags,date,summary FROM notes WHERE type = 'runbook'`
+	var args []any
+	if name != "" {
+		q += ` AND (title LIKE ? OR path LIKE ? OR tags LIKE ?)`
+		like := "%" + name + "%"
+		args = append(args, like, like, like)
+	}
+	q += ` ORDER BY date DESC, path LIMIT ?`
+	args = append(args, limit)
+	rows, err := d.sql.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	return scanEntries(rows)
+}
+
+// ContextCandidates 는 project 어휘로 관련 런북·노트 후보를 선별한다.
+// project 가 비면 런북은 최근순 전체, 일반 노트는 빈 결과를 반환한다.
+func (d *DB) ContextCandidates(project string, limit int) (runbooks, notes []IndexEntry, err error) {
+	like := "%" + project + "%"
+	const cols = `SELECT path,title,type,domain,tags,date,summary FROM notes`
+
+	rbQ := cols + ` WHERE type = 'runbook'`
+	var rbArgs []any
+	if project != "" {
+		rbQ += ` AND (tags LIKE ? OR title LIKE ? OR path LIKE ?)`
+		rbArgs = append(rbArgs, like, like, like)
+	}
+	rbQ += ` ORDER BY date DESC, path LIMIT ?`
+	rbArgs = append(rbArgs, limit)
+	rbRows, err := d.sql.Query(rbQ, rbArgs...)
+	if err != nil {
+		return nil, nil, err
+	}
+	if runbooks, err = scanEntries(rbRows); err != nil {
+		return nil, nil, err
+	}
+
+	if project == "" {
+		return runbooks, []IndexEntry{}, nil
+	}
+	nRows, err := d.sql.Query(
+		cols+` WHERE type != 'runbook' AND (tags LIKE ? OR title LIKE ? OR path LIKE ?)
+		       ORDER BY date DESC, path LIMIT ?`,
+		like, like, like, limit)
+	if err != nil {
+		return nil, nil, err
+	}
+	if notes, err = scanEntries(nRows); err != nil {
+		return nil, nil, err
+	}
+	return runbooks, notes, nil
+}
+
 // GetIndex 는 필터(type/domain/dir prefix)로 목차를 반환한다.
 func (d *DB) GetIndex(typ, domain, dir string, limit int) ([]IndexEntry, error) {
 	q := `SELECT path,title,type,domain,tags,date,summary FROM notes WHERE 1=1`
@@ -158,19 +250,7 @@ func (d *DB) GetIndex(typ, domain, dir string, limit int) ([]IndexEntry, error) 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var out []IndexEntry
-	for rows.Next() {
-		var e IndexEntry
-		var tags string
-		if err := rows.Scan(&e.Path, &e.Title, &e.Type, &e.Domain, &tags, &e.Date, &e.Summary); err != nil {
-			return nil, err
-		}
-		e.Tags = splitTags(tags)
-		out = append(out, e)
-	}
-	return out, rows.Err()
+	return scanEntries(rows)
 }
 
 // sanitizeFTSQuery 는 사용자 입력을 안전한 FTS5 MATCH 식으로 변환한다.

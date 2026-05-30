@@ -19,6 +19,7 @@ import (
 
 	"github.com/alanhakhyeonsong/grimoire/internal/boundary"
 	"github.com/alanhakhyeonsong/grimoire/internal/config"
+	"github.com/alanhakhyeonsong/grimoire/internal/contextsig"
 	"github.com/alanhakhyeonsong/grimoire/internal/frontmatter"
 	"github.com/alanhakhyeonsong/grimoire/internal/index"
 	"github.com/alanhakhyeonsong/grimoire/internal/writer"
@@ -48,6 +49,16 @@ type readNoteInput struct {
 
 type linksInput struct {
 	Path string `json:"path" jsonschema:"KB 루트 기준 상대경로"`
+}
+
+type getContextInput struct {
+	Cwd   string `json:"cwd" jsonschema:"현재 작업 디렉토리 절대경로. jump 레지스트리 역매핑으로 project 를 추론한다"`
+	Limit int    `json:"limit,omitempty" jsonschema:"런북/노트 후보 각 최대 수(기본 10)"`
+}
+
+type getRunbookInput struct {
+	Name  string `json:"name,omitempty" jsonschema:"런북 이름/키워드(title·path·tags 매칭). 생략 시 전체 런북 목록만 반환"`
+	Limit int    `json:"limit,omitempty" jsonschema:"최대 결과 수(기본 20)"`
 }
 
 type writeNoteInput struct {
@@ -87,13 +98,15 @@ func main() {
 		log.Fatalln("설정 로드 실패:", err)
 	}
 
-	// 시작 시 인덱싱(신선도 보장). Phase 2 에서 증분/watch 로 대체 예정.
-	st, db, err := index.Reindex(c)
+	// 시작 시 mtime 기반 증분 동기화(Phase 2). 전체 재인덱싱을 없애
+	// idle 메모리·시작 시간을 절감한다. 인덱스 손상 시 reindex CLI 로 전체 복구.
+	st, db, err := index.Sync(c)
 	if err != nil {
 		log.Fatalln("인덱싱 실패:", err)
 	}
 	defer db.Close()
-	log.Printf("grimoire: 인덱싱 완료 (%d건, 차단경로 %d 제외)", st.Indexed, st.ExcludedPrivate)
+	log.Printf("grimoire: 동기화 완료 (총 %d건 / 갱신 %d, 변경없음 %d, 삭제 %d, 차단 %d 제외)",
+		st.Indexed, st.Updated, st.Unchanged, st.Deleted, st.ExcludedPrivate)
 
 	s := mcp.NewServer(&mcp.Implementation{Name: "grimoire", Version: "0.0.1"}, nil)
 
@@ -167,6 +180,76 @@ func main() {
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
+		Name:        "get_context",
+		Description: "작업 경로 인지 컨텍스트. cwd 를 jump 레지스트리로 역매핑해 project 를 추론하고, 관련 런북·노트 후보를 좁혀 반환한다. 사용자가 프로젝트를 말하지 않아도 맥락을 확보하는 라우팅용. 신호원 미설정 시 enabled:false.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in getContextInput) (*mcp.CallToolResult, any, error) {
+		limit := in.Limit
+		if limit <= 0 {
+			limit = 10
+		}
+		res := contextsig.Resolve(c, in.Cwd)
+		runbooks, notes, err := db.ContextCandidates(res.Project, limit)
+		if err != nil {
+			return nil, nil, err
+		}
+		hint := res.Note
+		if res.Project != "" {
+			hint = "project '" + res.Project + "' 추론됨. 아래 런북/노트를 read_note 로 확인하세요."
+		} else if res.Enabled && hint == "" {
+			hint = "project 미추론 — 사용 가능한 런북 목록만 반환."
+		}
+		return textResult(map[string]any{
+			"cwd": in.Cwd, "enabled": res.Enabled, "project": res.Project,
+			"projectPath": res.ProjectPath, "runbooks": runbooks, "notes": notes,
+			"hint": hint,
+		})
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "get_runbook",
+		Description: "반복 작업 절차(type:runbook) 반환. name 지정 시 가장 잘 맞는 런북 본문을 바로 반환(배포·클러스터 접속 등), 생략 시 전체 런북 목록. 차단 경로는 제외.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in getRunbookInput) (*mcp.CallToolResult, any, error) {
+		limit := in.Limit
+		if limit <= 0 {
+			limit = 20
+		}
+		list, err := db.Runbooks(in.Name, limit)
+		if err != nil {
+			return nil, nil, err
+		}
+		if in.Name == "" {
+			return textResult(map[string]any{"count": len(list), "runbooks": list})
+		}
+		if len(list) == 0 {
+			return textResult(map[string]any{"count": 0, "message": "일치하는 런북이 없습니다: " + in.Name})
+		}
+		// best match: 파일명(확장자 제외) 또는 title 이 name 과 정확히 일치하면 우선, 아니면 최신순 1번째
+		best := list[0]
+		for _, e := range list {
+			base := strings.TrimSuffix(filepath.Base(e.Path), ".md")
+			if base == in.Name || e.Title == in.Name {
+				best = e
+				break
+			}
+		}
+		abs := filepath.Join(c.KB.Root, best.Path)
+		data, rerr := os.ReadFile(abs)
+		if rerr != nil {
+			return nil, nil, fmt.Errorf("런북 본문을 읽을 수 없습니다: %s", best.Path)
+		}
+		others := make([]string, 0, len(list))
+		for _, e := range list {
+			if e.Path != best.Path {
+				others = append(others, e.Path)
+			}
+		}
+		return textResult(map[string]any{
+			"matched": best.Path, "title": best.Title, "content": string(data),
+			"others": others,
+		})
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
 		Name:        "write_note",
 		Description: "분류 규약에 맞춰 KB 에 노트 저장(Phase 1). type/domain 으로 dir 자동결정(또는 dir 명시), 파일명·frontmatter 자동생성, atomic write. 분류 모호 시 후보 dir 와 함께 ok:false 반환. redact 대상 dir 은 사내 식별자 발견 시 저장 거부.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in writeNoteInput) (*mcp.CallToolResult, any, error) {
@@ -208,7 +291,13 @@ func main() {
 			if rerr != nil {
 				indexErr = "read: " + rerr.Error()
 			} else {
-				note, fm := frontmatter.Parse(string(raw), res.Path, time.Now().UnixMilli(), c)
+				// 실제 파일 mtime 으로 인덱싱해야 다음 시작의 Sync 가
+				// 이 노트를 변경됨으로 오인(중복 재인덱싱)하지 않는다.
+				mtime := time.Now().UnixMilli()
+				if info, serr := os.Stat(abs); serr == nil {
+					mtime = info.ModTime().UnixMilli()
+				}
+				note, fm := frontmatter.Parse(string(raw), res.Path, mtime, c)
 				if boundary.IsPrivateByFrontmatter(fm, c) {
 					private = true
 				} else if derr := db.DeletePath(res.Path); derr != nil {

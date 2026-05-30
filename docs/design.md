@@ -285,8 +285,11 @@ flowchart LR
 | `read_note({path})` | 본문 읽기 | 명시 단건만 허용 | 0 |
 | `links({path})` | `[[링크]]` 그래프 추적 | 제외 | 0 |
 | `write_note({title,content,type,...})` | 분류규약 적용 저장 | 쓰기 허용 | 1 (완료) |
-| `get_runbook({name})` | 작업 런북 반환 | 제외 | 2 |
+| `get_context({cwd,limit?})` | cwd→project 역추론 + 관련 런북·노트 후보 | 제외 | 2 (완료) |
+| `get_runbook({name?,limit?})` | 작업 런북 반환(name 시 본문, 생략 시 목록) | 제외 | 2 (완료) |
 | `reindex()` / `lint()` | 인덱스 재생성 / 건강검진 | 제외 | 3(Ollama) |
+
+> Phase 2 메모리 레버: 시작 시 전체 재인덱싱 대신 **mtime 기반 증분 동기화**(`index.Sync`)로 인덱스를 디스크에 보존하고 변경분만 갱신·삭제 스윕한다. full 재인덱싱은 `reindex` CLI(검증·복구)에 남는다. 세션시작 컨텍스트 주입은 `grimoire-context` 헬퍼 + `SessionStart` 훅(선택)으로 제공한다.
 
 ---
 

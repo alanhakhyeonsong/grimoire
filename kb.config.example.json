@@ -45,6 +45,7 @@
     "directories": {
       "docs":            { "type": "analysis",   "domain": "general", "naming": "date-compact", "tone": "report",     "ai_access": "shared" },
       "guides":          { "type": "guide",      "domain": "ops",     "naming": "kebab",        "tone": "guide",      "ai_access": "shared" },
+      "runbooks":        { "type": "runbook",    "domain": "ops",     "naming": "kebab",        "tone": "guide",      "ai_access": "shared" },
       "projects":        { "type": "design",     "domain": "project", "naming": "kebab",        "tone": "design",     "ai_access": "shared", "nested": true },
       "references":      { "type": "reference",  "domain": "external","naming": "kebab",        "tone": "report",     "ai_access": "shared" },
       "blog":            { "type": "blog",       "domain": "blog",    "naming": "kebab",        "tone": "1st-person", "ai_access": "shared", "redact": true },
