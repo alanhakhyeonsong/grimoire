@@ -69,10 +69,10 @@
   },
 
   "ollama": {
-    "$comment": "임베딩 아님. Phase 3 위키 컴파일러(백필 태깅/lint/요약) 옵션. 기본 비활성.",
+    "$comment": "임베딩 아님. 위키 컴파일러(백필 태깅/lint/요약) 옵션. 기본 비활성. model 은 ollama 에 받아둔 아무 텍스트 생성 모델(짧은 JSON 분류라 경량 모델로 충분).",
     "enabled": false,
     "host": "http://localhost:11434",
-    "model": "qwen2.5"
+    "model": "qwen3:8b"
   },
 
   "redact": {

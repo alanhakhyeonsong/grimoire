@@ -5,7 +5,7 @@
 > Claude Code가 반복 설명 없이 맥락을 끌어다 쓰고(RAG-lite), 분류 규약에 맞춰 산출물을 써넣게 한다.
 > 임베딩을 쓰지 않으며, config 주도로 환경이 다른 다른 사용자도 확장 가능하게 설계한다.
 
-- 상태: 설계 확정 (Phase 0 구현 대기)
+- 상태: 구현 완료 (RAG-lite + write_note + 증분 인덱싱 + 컨텍스트 라우팅 + 컴파일러)
 - 작성일: 2026-05-29
 - 구현 경로: `~/tools/grimoire`
 - 스택: Go + stdio (단일 바이너리). 처음 Bun + TypeScript로 시작했다가 메모리·배포 이유로 전환 (8장 참고).
@@ -33,7 +33,7 @@
 - 6 레이어 구조: Config → Source(md) → Boundary(pull 차단/push 허용) → Index(SQLite FTS5) → Compiler(옵션 Ollama) → MCP Tools.
 - 검색 주체는 Claude다. MCP는 목차/본문/링크를 제공하고, 어떤 페이지를 읽을지는 Claude가 판단한다 (Karpathy 핵심: "검색을 임베딩에 위임하지 말고 LLM에 위임하라").
 - 확장성은 "엔진 고정 + config 외재화"로 달성한다. "유저 A = 개인 KB + 조직 디렉토리 규약"을 전부 `kb.config.json`으로 빼낸다.
-- 1차 릴리스(Phase 0) = `get_index` + `search` + `read_note` + `links` (RAG-lite). 쓰기/런북/Ollama는 후속 단계.
+- RAG-lite 코어 = `get_index` + `search` + `read_note` + `links`. 쓰기(`write_note`)·런북·Ollama 컴파일러는 그 위에 얹는다.
 
 ---
 
@@ -96,7 +96,7 @@ flowchart TD
       OL["Ollama: 백필 태깅·lint·요약"]
     end
     subgraph Tool["⑥ MCP Tools"]
-      T["get_index · search · read_note · links · write_note · get_runbook"]
+      T["get_index · search · read_note · links · write_note · get_context · get_runbook · lint · suggest_frontmatter"]
     end
 
     C --> P
@@ -216,7 +216,7 @@ namespace: web
 
 - `ai_access: private` = 차단 디렉토리 밖에서도 개별 파일을 pull에서 제외하는 오버라이드.
 - frontmatter 없는 기존 파일: 엔진이 경로(`infra-network/` → `type:analysis`, `tags:[infra-network]`), 제목, 본문에서 추론해 인덱싱한다. 동작에 지장 없음.
-- 백필: Phase 3에서 Ollama가 추론값을 frontmatter로 제안하고, 사용자/Claude 검수 후 기록한다. 점진적이며 자동 덮어쓰기 금지.
+- 백필: Ollama 컴파일러가 추론값을 frontmatter로 제안하고, 사용자/Claude 검수 후 기록한다. 점진적이며 자동 덮어쓰기 금지.
 
 ---
 
@@ -276,20 +276,23 @@ flowchart LR
 
 ---
 
-## 7) MCP 툴 세트 (단계별)
+## 7) MCP 툴 세트
 
-| 툴 | 기능 | 차단경로 정책 | Phase |
-|---|---|---|---|
-| `get_index({scope?})` | 목차(제목·태그·요약·경로) | 제외 | 0 |
-| `search({query,tags?,dir?})` | FTS5 키워드+태그 | 제외 | 0 |
-| `read_note({path})` | 본문 읽기 | 명시 단건만 허용 | 0 |
-| `links({path})` | `[[링크]]` 그래프 추적 | 제외 | 0 |
-| `write_note({title,content,type,...})` | 분류규약 적용 저장 | 쓰기 허용 | 1 (완료) |
-| `get_context({cwd,limit?})` | cwd→project 역추론 + 관련 런북·노트 후보 | 제외 | 2 (완료) |
-| `get_runbook({name?,limit?})` | 작업 런북 반환(name 시 본문, 생략 시 목록) | 제외 | 2 (완료) |
-| `reindex()` / `lint()` | 인덱스 재생성 / 건강검진 | 제외 | 3(Ollama) |
+| 툴 | 기능 | 차단경로 정책 |
+|---|---|---|
+| `get_index({scope?})` | 목차(제목·태그·요약·경로) | 제외 |
+| `search({query,tags?,dir?})` | FTS5 키워드+태그 | 제외 |
+| `read_note({path})` | 본문 읽기 | 명시 단건만 허용 |
+| `links({path})` | `[[링크]]` 그래프 추적 | 제외 |
+| `write_note({title,content,type,...})` | 분류규약 적용 저장 | 쓰기 허용 |
+| `get_context({cwd,limit?})` | cwd→project 역추론 + 관련 런북·노트 후보 | 제외 |
+| `get_runbook({name?,limit?})` | 작업 런북 반환(name 시 본문, 생략 시 목록) | 제외 |
+| `lint({limit?})` | 건강검진(frontmatter 결손/dangling link) — Ollama 불필요 | 제외 |
+| `suggest_frontmatter({path,apply?})` | Ollama frontmatter 백필 제안(apply 시 누락 키만 기록) | 제외/거부 |
 
-> Phase 2 메모리 레버: 시작 시 전체 재인덱싱 대신 **mtime 기반 증분 동기화**(`index.Sync`)로 인덱스를 디스크에 보존하고 변경분만 갱신·삭제 스윕한다. full 재인덱싱은 `reindex` CLI(검증·복구)에 남는다. 세션시작 컨텍스트 주입은 `grimoire-context` 헬퍼 + `SessionStart` 훅(선택)으로 제공한다.
+> 메모리 레버: 시작 시 전체 재인덱싱 대신 **mtime 기반 증분 동기화**(`index.Sync`)로 인덱스를 디스크에 보존하고 변경분만 갱신·삭제 스윕한다. full 재인덱싱은 `reindex` CLI(검증·복구)에 남는다. 세션시작 컨텍스트 주입은 `grimoire-context` 헬퍼 + `SessionStart` 훅(선택)으로 제공한다.
+
+> 컴파일러(옵션, `internal/compiler` + `internal/ollama`): `lint` 는 생성형 모델 없이 동작하는 구조 건강검진이다. `suggest_frontmatter` 는 `ollama.enabled=true` 일 때만 frontmatter 후보를 제안하며, `apply:true` 는 **기존 키를 절대 덮어쓰지 않고 누락 키만** 삽입한다(제안 → 검수 → 기록, §11). 차단 경로는 Ollama 에 전달하지도 수정하지도 않는다. 배치용 `lint` CLI 별도 제공.
 
 ---
 
@@ -304,11 +307,11 @@ flowchart LR
 | frontmatter 파싱 | `gopkg.in/yaml.v3` + 직접 `---` 분리 | gray-matter 동등 |
 | glob | `bmatcuk/doublestar/v4` | `**` 매칭 |
 | 임베딩 | 없음 | |
-| Ollama | 옵션 (`/api/generate`, 백필 전용) | Phase 3 |
+| Ollama | 옵션 (`/api/generate`, 백필 전용) | 컴파일러, 기본 비활성 |
 
 ### 8.1 Bun → Go 전환 근거와 메모리 진단
 
-처음엔 Bun + TypeScript로 정하고 Phase 0 인덱서를 구현·검증했다. 이후 한 MCP 도구 제작자의 조언("Node류는 세션당 메모리 누적, idle 60MB")을 반영해 Go + stdio로 전환했다.
+처음엔 Bun + TypeScript로 정하고 초기 인덱서를 구현·검증했다. 이후 한 MCP 도구 제작자의 조언("Node류는 세션당 메모리 누적, idle 60MB")을 반영해 Go + stdio로 전환했다.
 
 실측 결과(서버 시작 시 100개 인덱싱 포함 idle RSS):
 
@@ -319,7 +322,7 @@ flowchart LR
 | Bun (빈 서버) | 24.9 MB | 동급 |
 | Node 동급 | 40~60 MB | |
 
-진단: 메모리 주범은 sqlite 드라이버가 아니라(modernc vs cgo 1.7MB 차) Go 런타임 베이스 + 시작 시 전체 인덱싱이다. 따라서 modernc 유지(순수 Go 단일 바이너리)가 옳고, 추가 절감의 진짜 레버는 "시작 시 인덱싱 → 증분 캐시"(Phase 2)다. Go 28MB는 Node의 절반이라 조언 목표는 달성했고, cgo 없는 단일 바이너리라 stdio 배포가 가장 깔끔하다.
+진단: 메모리 주범은 sqlite 드라이버가 아니라(modernc vs cgo 1.7MB 차) Go 런타임 베이스 + 시작 시 전체 인덱싱이다. 따라서 modernc 유지(순수 Go 단일 바이너리)가 옳고, 추가 절감의 진짜 레버는 "시작 시 인덱싱 → 증분 캐시"다. Go 28MB는 Node의 절반이라 조언 목표는 달성했고, cgo 없는 단일 바이너리라 stdio 배포가 가장 깔끔하다.
 
 ---
 
@@ -335,7 +338,7 @@ flowchart LR
 
 ## 10) 운영 고려사항 (Operations)
 
-- 인덱스는 재생성 가능 자산이다. 현재는 서버 시작 시 전체 인덱싱(Phase 2에서 fsnotify watch 또는 mtime 증분으로 대체 예정). `reindex` CLI로 수동 재생성 가능. git 충돌과 무관(gitignore).
+- 인덱스는 재생성 가능 자산이다. 서버 시작 시 mtime 기반 증분 동기화(`index.Sync`)로 갱신하고, `reindex` CLI로 전체 재생성 가능. git 충돌과 무관(gitignore).
 - Obsidian이 같은 파일을 동시 편집할 수 있다. MCP write는 atomic write(temp → rename)로 처리하고, 충돌 시 사용자 편집을 우선한다.
 - 백필은 항상 "제안 → 검수 → 기록" 순서. frontmatter 자동 덮어쓰기 금지.
 - 첫 인덱싱 시 frontmatter 없는 100개 파일의 fallback 추론 결과를 로그로 남겨 점검한다.
@@ -359,30 +362,35 @@ flowchart LR
 | 결정 | 선택 | 대안 | 기준 |
 |---|---|---|---|
 | 인덱스 | SQLite FTS5 | 인메모리 스캔 | 수백~수천 규모면 FTS5가 안정적, 재시작 빠름 |
-| 주입 방식 | 명시 호출(get_index → read) | 세션시작 hook 자동주입 | 자동주입은 토큰낭비/차단경로 위험 → 명시 우선, Phase 2에서 선택적 hook |
-| KB 개수 | 단일 root | 멀티 root | 1차 단일, config 배열화로 확장 가능 |
-| 임베딩 | 없음 | Ollama 임베딩 레이어 | 수만 문서 + 탐색질문 잦아지면 Phase 4 옵션 |
+| 주입 방식 | 명시 호출(get_index → read) | 세션시작 hook 자동주입 | 자동주입은 토큰낭비/차단경로 위험 → 명시 우선, 선택적 hook 제공 |
+| KB 개수 | 단일 root | 멀티 root | 우선 단일, config 배열화로 확장 가능 |
+| 임베딩 | 없음 | Ollama 임베딩 레이어 | 수만 문서 + 탐색질문 잦아지면 향후 옵션 |
 | 런타임 | Go | Bun / Node | Node는 세션당 메모리 큼. Go는 단일 바이너리 + Node 절반 메모리 |
 | 배포 | stdio per-session | HTTP 단일 데몬 | stdio는 데몬 관리 불필요. 메모리 누적이 문제되면 데몬 전환 가능 |
 | SQLite 드라이버 | modernc(순수 Go) | mattn(cgo) | 메모리 1.7MB 차뿐이라 cgo 빌드 복잡성 불채택 |
 
 ---
 
-## 13) 로드맵
+## 13) 구현 현황 / 향후
 
 ```mermaid
 flowchart LR
-    P0["Phase 0 (완료): RAG-lite\nconfig+인덱서+get_index/search/read/links"] --> P1["Phase 1: write_note\n분류규약 적용 저장"]
-    P1 --> P2["Phase 2: 증분인덱싱+runbook\n+ 선택적 컨텍스트 주입 hook"]
-    P2 --> P3["Phase 3: Ollama 컴파일러\n백필·lint"]
-    P3 --> P4["Phase 4(옵션): 임베딩 레이어"]
+    Core["RAG-lite 코어: config+인덱서+get_index/search/read_note/links"] --> Write["write_note: 분류규약 저장"]
+    Write --> Sync["증분 인덱싱 + get_context/get_runbook"]
+    Sync --> Comp["Ollama 컴파일러: lint + frontmatter 백필"]
+    Comp --> Emb["향후(옵션): 임베딩 레이어"]
 ```
 
-- Phase 0 (완료, Go): config 로더 + 인덱서(FTS5, fallback 추론) + `get_index`/`search`/`read_note`/`links` + stdio MCP 서버. Bun과 동일 결과 검증, 단일 바이너리 14MB.
-- Phase 1 (완료): `write_note` — taxonomy 역매핑(type/domain→dir, 모호 시 후보 반환), 파일명 컨벤션(kebab/date-compact), frontmatter 자동생성, redact 스캔+차단(config `redact.patterns`), atomic write(temp→rename), 증분 인덱스 갱신(DeletePath+Upsert), 차단 dir push 허용(인덱스 제외). DB 는 단일 연결 직렬화(SQLITE_BUSY 방지) + write_note mutex.
-- Phase 2: 증분 인덱싱(mtime/fsnotify, 시작 메모리·시간 절감) + `get_runbook` + `get_context`(cwd → project 라우팅, jump 레지스트리 연동) + 선택적 세션시작 컨텍스트 주입 hook.
-- Phase 3: Ollama 컴파일러 (frontmatter 백필 제안, lint).
-- Phase 4(옵션): 문서가 수만 규모로 커지고 탐색형 질문이 잦아질 때 임베딩 레이어 추가.
+구현 완료:
+
+- RAG-lite 코어(Go): config 로더 + 인덱서(FTS5, fallback 추론) + `get_index`/`search`/`read_note`/`links` + stdio MCP 서버. 단일 바이너리 14MB.
+- `write_note`: taxonomy 역매핑(type/domain→dir, 모호 시 후보 반환), 파일명 컨벤션(kebab/date-compact), frontmatter 자동생성, redact 스캔+차단(config `redact.patterns`), atomic write(temp→rename), 증분 인덱스 갱신(DeletePath+Upsert), 차단 dir push 허용(인덱스 제외). DB 는 단일 연결 직렬화(SQLITE_BUSY 방지) + write_note mutex.
+- 증분 인덱싱(mtime 기반 `index.Sync`, 시작 메모리·시간 절감) + `get_runbook` + `get_context`(cwd → project 라우팅, jump 레지스트리 연동) + 선택적 세션시작 컨텍스트 주입 hook.
+- Ollama 컴파일러(옵션, 기본 비활성): `lint`(구조 건강검진, 모델 불필요) + `suggest_frontmatter`(frontmatter 백필 제안, apply 시 누락 키만 기록).
+
+향후(옵션):
+
+- 임베딩 레이어: 문서가 수만 규모로 커지고 탐색형 질문이 잦아질 때 추가.
 
 ---
 
@@ -393,5 +401,5 @@ flowchart LR
 3. AI 접근 경계 = pull 차단 / push 허용. 차단 목록은 `personal/career`, `personal/analysis`, `docs/career` 3개로 확정.
 4. 확장성 = 엔진 고정 + config 외재화 (`kb.config.json`).
 5. frontmatter는 있으면 활용, 없으면 fallback 추론, 점진 백필.
-6. 스택은 Go + stdio per-session, 공식 `go-sdk` + `modernc` sqlite(순수 Go). Bun+TS에서 전환(메모리·단일 바이너리). 메모리 주범은 드라이버가 아니라 시작 시 인덱싱 → Phase 2 증분 캐시가 절감 레버.
+6. 스택은 Go + stdio per-session, 공식 `go-sdk` + `modernc` sqlite(순수 Go). Bun+TS에서 전환(메모리·단일 바이너리). 메모리 주범은 드라이버가 아니라 시작 시 인덱싱 → 증분 캐시가 절감 레버.
 7. 작업 경로 인지 라우팅: `~/.zsh-jump` 레지스트리로 cwd → project를 역매핑해 컨텍스트를 자동으로 좁힌다. config의 `context_signals`로 외재화하며 다른 유저는 비활성 가능.

@@ -41,9 +41,10 @@ grimoire/
   kb.config.example.json  # KB 설정 템플릿 (kb.config.json 으로 복사; 실제 설정은 gitignore)
   README.md / docs/design.md
   cmd/
-    grimoire/           # stdio MCP 서버 (7 툴, 시작 시 mtime 증분 Sync)
+    grimoire/           # stdio MCP 서버 (9 툴, 시작 시 mtime 증분 Sync)
     reindex/            # full 재인덱싱 CLI (검증/복구)
     grimoire-context/   # SessionStart 훅용 컨텍스트 주입 헬퍼 (선택)
+    lint/               # 배치 건강검진 CLI (Ollama 불필요)
   internal/
     config/             # kb.config.json 로딩·검증
     boundary/           # AI 접근 경계 가드 (pull 차단/push 허용)
@@ -51,6 +52,8 @@ grimoire/
     index/              # SQLite FTS5 인덱스 + 인덱서 (Reindex / Sync)
     writer/             # write_note: 분류 역매핑·파일명·frontmatter·atomic write·redact
     contextsig/         # cwd → jump 레지스트리 역매핑 (project 추론)
+    compiler/           # lint(구조검진) + suggest/apply(frontmatter 백필)
+    ollama/             # 선택적 Ollama 클라이언트 (생성 전용, 기본 비활성)
   bin/                  # 빌드 산출물 (gitignore)
 ```
 
@@ -70,6 +73,7 @@ cp kb.config.example.json kb.config.json
 go build -o bin/grimoire         ./cmd/grimoire          # MCP 서버 (시작 시 증분 Sync)
 go build -o bin/reindex          ./cmd/reindex           # full 재인덱싱 CLI (검증/복구)
 go build -o bin/grimoire-context ./cmd/grimoire-context  # 세션시작 훅 헬퍼 (선택)
+go build -o bin/lint             ./cmd/lint              # 건강검진 CLI (Ollama 불필요)
 
 # full 재인덱싱 + 검증 통계 출력 (인덱스 손상 시 복구 경로)
 ./bin/reindex kb.config.json
@@ -90,15 +94,17 @@ config 경로는 인자 또는 `GRIMOIRE_CONFIG` 환경변수로 지정한다.
 
 ## MCP 툴
 
-| 툴 | 기능 | 차단경로 | Phase |
-|---|---|---|---|
-| `get_index` | 목차(제목·태그·요약·경로) 라우팅용 | 제외 | 0 ✅ |
-| `search` | FTS5 키워드 + 태그/디렉토리 필터 | 제외 | 0 ✅ |
-| `read_note` | 본문 읽기 | 명시 단건만 허용 | 0 ✅ |
-| `links` | `[[링크]]` 그래프(outgoing/incoming) | 제외 | 0 ✅ |
-| `write_note` | 분류규약 적용 저장(역매핑·frontmatter·atomic·redact) | 쓰기 허용 | 1 ✅ |
-| `get_context` | cwd→project 역추론 + 관련 런북·노트 후보 | 제외 | 2 ✅ |
-| `get_runbook` | 반복 절차(`type:runbook`) 반환 | 제외 | 2 ✅ |
+| 툴 | 기능 | 차단경로 |
+|---|---|---|
+| `get_index` | 목차(제목·태그·요약·경로) 라우팅용 | 제외 |
+| `search` | FTS5 키워드 + 태그/디렉토리 필터 | 제외 |
+| `read_note` | 본문 읽기 | 명시 단건만 허용 |
+| `links` | `[[링크]]` 그래프(outgoing/incoming) | 제외 |
+| `write_note` | 분류규약 적용 저장(역매핑·frontmatter·atomic·redact) | 쓰기 허용 |
+| `get_context` | cwd→project 역추론 + 관련 런북·노트 후보 | 제외 |
+| `get_runbook` | 반복 절차(`type:runbook`) 반환 | 제외 |
+| `lint` | 건강검진(frontmatter 결손/dangling link) — Ollama 불필요 | 제외 |
+| `suggest_frontmatter` | Ollama frontmatter 백필 제안(apply 시 누락 키만 기록) | 제외/거부 |
 
 ## 사용법 (워크플로우)
 
@@ -163,9 +169,41 @@ get_context({cwd:"/Users/you/projects/proj-a"})
   "command": "~/tools/grimoire/bin/grimoire-context ~/tools/grimoire/kb.config.json" } ] }
 ```
 
+### 5) 건강검진 & frontmatter 백필 (컴파일러)
+
+KB가 커지면 frontmatter 결손·깨진 링크가 쌓인다. `lint`로 점검하고, 선택적으로 Ollama가 frontmatter를 제안한다.
+
+```bash
+# 구조 건강검진 (Ollama 불필요) — frontmatter 결손/dangling link 보고
+./bin/lint kb.config.json          # 상위 50건
+./bin/lint kb.config.json --all    # 전체
+```
+
+`suggest_frontmatter`(MCP 툴)는 Ollama로 frontmatter 후보를 제안한다. **기본 비활성**이며 켜려면 config:
+
+```jsonc
+"ollama": { "enabled": true, "host": "http://localhost:11434", "model": "qwen3:8b" }
+```
+
+```
+"이 노트 frontmatter 좀 채워줘: backend/redis-penetration.md"
+  → suggest_frontmatter({path:"backend/redis-penetration.md"})           # 제안만(검수용)
+  → suggest_frontmatter({path:"...", apply:true})                        # 검수 후 기록
+```
+
+안전장치(design §11):
+- **제안 → 검수 → 기록** 순서. `apply:true`는 **누락된 코어 키만** 삽입하고 **기존 키는 절대 덮어쓰지 않는다**(멱등, atomic write).
+- 파일명에 날짜가 없으면 `date`를 임의 생성하지 않는다.
+- 차단 경로는 Ollama에 **전달하지도 수정하지도 않는다**.
+- Ollama 미가동/비활성이면 `ok:false`로 graceful 처리(엔진의 나머지 기능은 정상).
+
+> 모델은 Ollama에 받아둔 아무 텍스트 생성 모델이면 된다. 백필은 짧은 JSON 분류라 경량 모델로 충분하다(예: `qwen3:8b`, `gemma3:4b`, `llama3.2:3b`). 임베딩이 아니다.
+
 ## 현재 상태
 
-**Phase 2 완료** — RAG-lite 4툴(Phase 0) + `write_note`(Phase 1) + 증분 인덱싱·`get_context`·`get_runbook`(Phase 2) 동작. 다음 단계는 Phase 3(Ollama 컴파일러: frontmatter 백필 제안/lint, 기본 비활성).
+동작하는 기능: RAG-lite 4툴(`get_index`/`search`/`read_note`/`links`) + `write_note`(분류규약 저장) + 증분 인덱싱 + `get_context`/`get_runbook`(작업 경로·런북 라우팅) + `lint`/`suggest_frontmatter`(건강검진·Ollama 백필).
+
+향후(옵션): 문서가 수만 규모로 커지고 탐색형 질문이 잦아질 때 임베딩 레이어 추가.
 
 ## 라이선스
 

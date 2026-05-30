@@ -1,4 +1,4 @@
-// Package writer 는 write_note(Phase 1)의 핵심 로직이다.
+// Package writer 는 write_note 의 핵심 로직이다.
 //
 // taxonomy 역매핑(type/domain -> dir), 파일명 컨벤션, frontmatter 생성,
 // redact 스캔, atomic write(temp -> rename)를 담당한다.
@@ -195,6 +195,9 @@ func buildContent(title, date, typ string, tags []string, status, access, body s
 	b.WriteString("\n")
 	return b.String()
 }
+
+// AtomicWrite 는 atomicWrite 의 공개 래퍼다(compiler 백필 기록 등에서 재사용).
+func AtomicWrite(abs string, data []byte) error { return atomicWrite(abs, data) }
 
 // atomicWrite 는 같은 디렉토리에 temp 로 쓴 뒤 rename 한다(Obsidian 동시편집 대비).
 func atomicWrite(abs string, data []byte) error {

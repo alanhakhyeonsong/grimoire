@@ -227,6 +227,42 @@ func (d *DB) ContextCandidates(project string, limit int) (runbooks, notes []Ind
 	return runbooks, notes, nil
 }
 
+// AllNotePaths 는 인덱스에 적재된 모든 노트 경로를 반환한다(lint 순회용).
+func (d *DB) AllNotePaths() ([]string, error) {
+	rows, err := d.sql.Query(`SELECT path FROM notes ORDER BY path`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// AllLinks 는 전체 [[wikilink]] 엣지(src,dst)를 반환한다(dangling 판정용).
+func (d *DB) AllLinks() ([][2]string, error) {
+	rows, err := d.sql.Query(`SELECT src, dst FROM links`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out [][2]string
+	for rows.Next() {
+		var s, dst string
+		if err := rows.Scan(&s, &dst); err != nil {
+			return nil, err
+		}
+		out = append(out, [2]string{s, dst})
+	}
+	return out, rows.Err()
+}
+
 // GetIndex 는 필터(type/domain/dir prefix)로 목차를 반환한다.
 func (d *DB) GetIndex(typ, domain, dir string, limit int) ([]IndexEntry, error) {
 	q := `SELECT path,title,type,domain,tags,date,summary FROM notes WHERE 1=1`

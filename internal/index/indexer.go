@@ -111,7 +111,7 @@ func Reindex(c *config.Config) (Stats, *DB, error) {
 // Sync 는 mtime 기반 증분 동기화다. 기존 인덱스를 보존한 채
 // 파일 mtime 이 인덱스 기록과 다른 노트만 갱신하고, 사라진(또는 더 이상
 // 적격이 아닌) 노트는 인덱스에서 제거한다. 시작 시 전체 재인덱싱을 없애
-// idle 메모리·시작 시간을 줄이는 Phase 2 레버다.
+// idle 메모리·시작 시간을 줄이는 핵심 레버다.
 // 인덱스가 비어 있으면(최초 실행) 사실상 전체 인덱싱과 동일하게 동작한다.
 func Sync(c *config.Config) (Stats, *DB, error) {
 	root := c.KB.Root

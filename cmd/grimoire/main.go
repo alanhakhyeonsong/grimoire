@@ -1,6 +1,7 @@
 // grimoire 는 stdio MCP 서버다.
 //
-// Phase 0 RAG-lite 툴: get_index / search / read_note / links.
+// 툴: get_index / search / read_note / links / write_note / get_context /
+// get_runbook / lint / suggest_frontmatter.
 // 시작 시 KB 를 인덱싱하고 stdin/stdout 으로 MCP 프로토콜을 처리한다.
 // 주의: stdio 의 stdout 은 JSON-RPC 채널이므로 로깅은 stderr 로만 한다.
 package main
@@ -18,10 +19,12 @@ import (
 	"time"
 
 	"github.com/alanhakhyeonsong/grimoire/internal/boundary"
+	"github.com/alanhakhyeonsong/grimoire/internal/compiler"
 	"github.com/alanhakhyeonsong/grimoire/internal/config"
 	"github.com/alanhakhyeonsong/grimoire/internal/contextsig"
 	"github.com/alanhakhyeonsong/grimoire/internal/frontmatter"
 	"github.com/alanhakhyeonsong/grimoire/internal/index"
+	"github.com/alanhakhyeonsong/grimoire/internal/ollama"
 	"github.com/alanhakhyeonsong/grimoire/internal/writer"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -49,6 +52,15 @@ type readNoteInput struct {
 
 type linksInput struct {
 	Path string `json:"path" jsonschema:"KB 루트 기준 상대경로"`
+}
+
+type lintInput struct {
+	Limit int `json:"limit,omitempty" jsonschema:"findings 최대 수(기본 50, 0=무제한)"`
+}
+
+type suggestFrontmatterInput struct {
+	Path  string `json:"path" jsonschema:"KB 루트 기준 상대경로. Ollama 가 frontmatter 후보를 제안한다(차단경로 거부)"`
+	Apply bool   `json:"apply,omitempty" jsonschema:"true 면 누락된 frontmatter 키만 기록(기존 키는 절대 덮어쓰지 않음). 기본 false=제안만"`
 }
 
 type getContextInput struct {
@@ -98,7 +110,7 @@ func main() {
 		log.Fatalln("설정 로드 실패:", err)
 	}
 
-	// 시작 시 mtime 기반 증분 동기화(Phase 2). 전체 재인덱싱을 없애
+	// 시작 시 mtime 기반 증분 동기화. 전체 재인덱싱을 없애
 	// idle 메모리·시작 시간을 절감한다. 인덱스 손상 시 reindex CLI 로 전체 복구.
 	st, db, err := index.Sync(c)
 	if err != nil {
@@ -250,8 +262,76 @@ func main() {
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
+		Name:        "lint",
+		Description: "KB 건강검진(Ollama 불필요). frontmatter 결손/누락 코어필드/dangling [[wikilink]] 을 노트별로 보고한다. 차단 경로는 제외.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in lintInput) (*mcp.CallToolResult, any, error) {
+		limit := in.Limit
+		if limit == 0 {
+			limit = 50
+		}
+		rep, err := compiler.Lint(c, db, limit)
+		if err != nil {
+			return nil, nil, err
+		}
+		return textResult(rep)
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "suggest_frontmatter",
+		Description: "Ollama 컴파일러(옵션). 노트 본문을 읽고 frontmatter 후보(title/type/tags/summary)를 제안한다. apply:true 면 누락된 코어 키만 기록(기존 키 덮어쓰기 금지, atomic). config ollama.enabled=false 거나 서버 미가동이면 ok:false. 차단 경로 거부.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in suggestFrontmatterInput) (*mcp.CallToolResult, any, error) {
+		if strings.TrimSpace(in.Path) == "" {
+			return nil, nil, fmt.Errorf("path 가 필요합니다")
+		}
+		oll, oerr := ollama.New(c)
+		if oerr != nil {
+			return textResult(map[string]any{"ok": false, "reason": "ollama-disabled", "message": oerr.Error()})
+		}
+		if !oll.Available(ctx) {
+			return textResult(map[string]any{"ok": false, "reason": "ollama-unreachable",
+				"message": "Ollama 서버에 연결할 수 없습니다(ollama serve 실행 확인)."})
+		}
+		prop, err := compiler.Suggest(ctx, c, oll, in.Path)
+		if err != nil {
+			return textResult(map[string]any{"ok": false, "reason": "suggest-failed", "message": err.Error()})
+		}
+		out := map[string]any{"ok": true, "path": in.Path, "model": oll.Model(), "proposal": prop, "applied": false}
+		if !in.Apply {
+			out["note"] = "제안만 반환(apply:false). 검수 후 apply:true 로 누락 키만 기록하세요."
+			return textResult(out)
+		}
+
+		// apply: 파일·인덱스 변경을 write_note 와 같은 mutex 로 직렬화
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		fields := compiler.BuildFields(c, in.Path, prop)
+		ar, aerr := compiler.Apply(c, in.Path, fields)
+		if aerr != nil {
+			return textResult(map[string]any{"ok": false, "reason": "apply-failed", "message": aerr.Error(), "proposal": prop})
+		}
+		out["applied"] = true
+		out["apply_result"] = ar
+		// 인덱스 증분 갱신(차단/사적은 제외 유지)
+		if !boundary.IsPrivateDir(ar.Path, c) {
+			abs := filepath.Join(c.KB.Root, ar.Path)
+			if raw, rerr := os.ReadFile(abs); rerr == nil {
+				mtime := time.Now().UnixMilli()
+				if info, serr := os.Stat(abs); serr == nil {
+					mtime = info.ModTime().UnixMilli()
+				}
+				note, fm := frontmatter.Parse(string(raw), ar.Path, mtime, c)
+				if !boundary.IsPrivateByFrontmatter(fm, c) {
+					_ = db.DeletePath(ar.Path)
+					_ = db.Upsert(note)
+				}
+			}
+		}
+		return textResult(out)
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
 		Name:        "write_note",
-		Description: "분류 규약에 맞춰 KB 에 노트 저장(Phase 1). type/domain 으로 dir 자동결정(또는 dir 명시), 파일명·frontmatter 자동생성, atomic write. 분류 모호 시 후보 dir 와 함께 ok:false 반환. redact 대상 dir 은 사내 식별자 발견 시 저장 거부.",
+		Description: "분류 규약에 맞춰 KB 에 노트 저장. type/domain 으로 dir 자동결정(또는 dir 명시), 파일명·frontmatter 자동생성, atomic write. 분류 모호 시 후보 dir 와 함께 ok:false 반환. redact 대상 dir 은 사내 식별자 발견 시 저장 거부.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in writeNoteInput) (*mcp.CallToolResult, any, error) {
 		// write 는 파일 stat/rename + 인덱스 갱신이 얽혀 있어 직렬화한다
 		// (동시 호출 시 exists 판정·쓰기 레이스 방지).
