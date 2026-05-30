@@ -21,8 +21,9 @@
   },
 
   "boundary": {
-    "$comment": "pull(검색/인덱싱/자동주입/컴파일) 차단, push(write)·명시 단건 read 허용. private_dirs 의 기본값은 코드 하드 가드로도 강제되며 config 로 해제할 수 없다(추가 차단만 가능).",
-    "private_dirs": ["private/journal", "private/career"],
+    "$comment": "pull(검색/인덱싱/자동주입/컴파일) 차단, push(write)·명시 단건 read 허용. locked_dirs=기본/항상 차단, private_dirs=추가 차단. 둘 다 시작 시 1회 로드되어 세션 중 무력화 불가(런타임 보호). 본인 KB 의 비공개 디렉토리로 교체한다.",
+    "locked_dirs": ["private/journal", "private/career"],
+    "private_dirs": [],
     "private_frontmatter": { "key": "ai_access", "deny_value": "private" },
     "write_allowed_in_private": true,
     "single_read_allowed_in_private": true

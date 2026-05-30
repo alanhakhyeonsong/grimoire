@@ -230,7 +230,8 @@ namespace: web
   "root": "~/memo",
   "indexPath": ".kb-index/",          // gitignore
   "boundary": {
-    "private_dirs": ["personal/career", "personal/analysis", "docs/career"],
+    "locked_dirs": ["personal/career", "personal/analysis", "docs/career"], // 기본·항상 차단
+    "private_dirs": [],                 // 추가 차단(선택)
     "private_frontmatter": { "key": "ai_access", "deny_value": "private" },
     "write_allowed_in_private": true   // push 허용 (산출물 보관함)
   },
@@ -340,7 +341,7 @@ flowchart LR
 
 ## 11) 보안 체크리스트 (Security)
 
-- pull 차단(career/analysis/docs-career)은 코드 하드 가드로 최후 방어선을 둔다. config는 "추가 차단"만 가능하고 "기본 차단 해제"는 불가하게 한다.
+- pull 차단 목록은 config(`boundary.locked_dirs` 기본 + `private_dirs` 추가)가 소유하며, 엔진에 사용자 경로를 하드코딩하지 않는다(확장성). 설정은 서버 시작 시 1회 로드되고 실행 중 프로세스는 재로딩하지 않으므로, 세션 도중 AI 가 config 를 편집해도 그 세션의 차단 목록은 바뀌지 않는다(런타임 보호). 운영자가 의도적으로 locked_dirs 를 비우지 않는 한 기본 차단은 유지된다.
 - 인덱스/캐시/로그에 차단 경로의 제목, 요약, 경로조차 기록하지 않는다.
 - 2번째 레이어 필수: `~/memo/CLAUDE.md`에 "career/analysis/docs-career는 능동 pull 금지, 명시 지시 시만 read/write" soft policy를 명문화한다. hard `deny`는 Edit 워크플로우(선행 Read 요구)를 깨므로 지양한다.
 - Ollama 컴파일러는 차단 파일을 읽지 않는다.

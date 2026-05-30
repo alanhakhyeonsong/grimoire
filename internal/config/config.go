@@ -29,6 +29,7 @@ type Config struct {
 	} `json:"kb"`
 
 	Boundary struct {
+		LockedDirs         []string `json:"locked_dirs"`
 		PrivateDirs        []string `json:"private_dirs"`
 		PrivateFrontmatter struct {
 			Key       string `json:"key"`

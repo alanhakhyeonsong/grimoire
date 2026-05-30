@@ -1,7 +1,9 @@
 // Package boundary 는 AI 접근 경계 가드다.
 //
 // pull(검색/인덱싱/자동주입/컴파일) 차단, push(write)와 명시 단건 read 허용.
-// hardPrivateDirs 는 config 로도 해제할 수 없는 코드 레벨 최후 방어선이다.
+// 차단 디렉토리 목록은 config 가 소유한다(엔진에 사용자 경로를 하드코딩하지 않는다).
+// 설정은 서버 시작 시 1회 로드되고 실행 중 프로세스는 config 를 다시 읽지 않으므로,
+// 세션 도중 차단 목록을 무력화할 수 없다(런타임 보호).
 package boundary
 
 import (
@@ -10,27 +12,24 @@ import (
 	"github.com/alanhakhyeonsong/grimoire/internal/config"
 )
 
-// hardPrivateDirs 는 config 로 해제 불가능한 기본 차단 디렉토리(배포 환경별 하드 디폴트).
-// 다른 KB 에 맞게 빌드 시 조정하거나, 비워두고 config 의 private_dirs 로만 운용할 수 있다.
-// (확장성 TODO: 이 기본값을 별도 locked_dirs config 키로 외재화 검토 — design.md §11)
-var hardPrivateDirs = []string{"personal/career", "personal/analysis", "docs/career"}
-
 func normalize(rel string) string {
 	rel = strings.ReplaceAll(rel, "\\", "/")
 	return strings.TrimPrefix(rel, "./")
 }
 
-// PrivateDirs 는 하드 디폴트 + config private_dirs 를 병합한다(해제 불가, 추가만 가능).
+// PrivateDirs 는 차단 디렉토리 집합을 반환한다.
+// locked_dirs(기본·항상 차단)와 private_dirs(추가 차단)를 병합·정규화한다.
 func PrivateDirs(c *config.Config) []string {
 	seen := make(map[string]bool)
 	var out []string
 	add := func(d string) {
+		d = normalize(strings.TrimSpace(d))
 		if d != "" && !seen[d] {
 			seen[d] = true
 			out = append(out, d)
 		}
 	}
-	for _, d := range hardPrivateDirs {
+	for _, d := range c.Boundary.LockedDirs {
 		add(d)
 	}
 	for _, d := range c.Boundary.PrivateDirs {
