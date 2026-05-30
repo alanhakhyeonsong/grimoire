@@ -72,5 +72,10 @@
     "enabled": false,
     "host": "http://localhost:11434",
     "model": "qwen2.5"
+  },
+
+  "redact": {
+    "$comment": "write_note 가 redact:true 인 dir(예: blog)에 저장할 때 본문/제목을 스캔할 정규식 목록. 하나라도 매칭되면 저장을 거부하고 매칭 목록을 돌려준다. 본인 환경의 사내 식별자(프로젝트 코드네임/클러스터명/내부 도메인 등)를 넣는다. 비우면 스캔 비활성.",
+    "patterns": []
   }
 }

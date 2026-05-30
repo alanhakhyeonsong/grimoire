@@ -284,7 +284,7 @@ flowchart LR
 | `search({query,tags?,dir?})` | FTS5 키워드+태그 | 제외 | 0 |
 | `read_note({path})` | 본문 읽기 | 명시 단건만 허용 | 0 |
 | `links({path})` | `[[링크]]` 그래프 추적 | 제외 | 0 |
-| `write_note({title,content,type,...})` | 분류규약 적용 저장 | 쓰기 허용 | 1 |
+| `write_note({title,content,type,...})` | 분류규약 적용 저장 | 쓰기 허용 | 1 (완료) |
 | `get_runbook({name})` | 작업 런북 반환 | 제외 | 2 |
 | `reindex()` / `lint()` | 인덱스 재생성 / 건강검진 | 제외 | 3(Ollama) |
 
@@ -376,7 +376,7 @@ flowchart LR
 ```
 
 - Phase 0 (완료, Go): config 로더 + 인덱서(FTS5, fallback 추론) + `get_index`/`search`/`read_note`/`links` + stdio MCP 서버. Bun과 동일 결과 검증, 단일 바이너리 14MB.
-- Phase 1: `write_note` (taxonomy 규약 적용 저장, atomic write).
+- Phase 1 (완료): `write_note` — taxonomy 역매핑(type/domain→dir, 모호 시 후보 반환), 파일명 컨벤션(kebab/date-compact), frontmatter 자동생성, redact 스캔+차단(config `redact.patterns`), atomic write(temp→rename), 증분 인덱스 갱신(DeletePath+Upsert), 차단 dir push 허용(인덱스 제외). DB 는 단일 연결 직렬화(SQLITE_BUSY 방지) + write_note mutex.
 - Phase 2: 증분 인덱싱(mtime/fsnotify, 시작 메모리·시간 절감) + `get_runbook` + `get_context`(cwd → project 라우팅, jump 레지스트리 연동) + 선택적 세션시작 컨텍스트 주입 hook.
 - Phase 3: Ollama 컴파일러 (frontmatter 백필 제안, lint).
 - Phase 4(옵션): 문서가 수만 규모로 커지고 탐색형 질문이 잦아질 때 임베딩 레이어 추가.

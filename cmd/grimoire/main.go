@@ -8,17 +8,25 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/alanhakhyeonsong/grimoire/internal/boundary"
 	"github.com/alanhakhyeonsong/grimoire/internal/config"
+	"github.com/alanhakhyeonsong/grimoire/internal/frontmatter"
 	"github.com/alanhakhyeonsong/grimoire/internal/index"
+	"github.com/alanhakhyeonsong/grimoire/internal/writer"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+// writeMu 는 write_note 의 파일·인덱스 갱신을 직렬화한다.
+var writeMu sync.Mutex
 
 type getIndexInput struct {
 	Type   string `json:"type,omitempty" jsonschema:"필터: 문서 타입(analysis, guide, runbook, log 등)"`
@@ -40,6 +48,19 @@ type readNoteInput struct {
 
 type linksInput struct {
 	Path string `json:"path" jsonschema:"KB 루트 기준 상대경로"`
+}
+
+type writeNoteInput struct {
+	Title     string   `json:"title" jsonschema:"문서 제목(H1/frontmatter title)"`
+	Content   string   `json:"content" jsonschema:"마크다운 본문(frontmatter 제외; 엔진이 frontmatter 를 생성해 앞에 붙인다)"`
+	Type      string   `json:"type,omitempty" jsonschema:"문서 타입(analysis/guide/runbook/reflection/blog 등). dir 미지정 시 분류에 사용"`
+	Domain    string   `json:"domain,omitempty" jsonschema:"도메인(backend/sre/infra-network 등). type 와 함께 dir 역매핑을 좁힌다"`
+	Dir       string   `json:"dir,omitempty" jsonschema:"저장 디렉토리(taxonomy 키) 직접 지정. 주면 type/domain 역매핑 생략"`
+	Tags      []string `json:"tags,omitempty" jsonschema:"태그 목록(생략 시 도메인 기본값)"`
+	Status    string   `json:"status,omitempty" jsonschema:"draft/active/done/archived(기본 active)"`
+	Slug      string   `json:"slug,omitempty" jsonschema:"파일명 핵심부(kebab). 생략 시 title 에서 생성"`
+	Date      string   `json:"date,omitempty" jsonschema:"YYYY-MM-DD. 날짜기반 네이밍 dir 에 사용(기본 오늘)"`
+	Overwrite bool     `json:"overwrite,omitempty" jsonschema:"기존 파일 덮어쓰기 허용(기본 false)"`
 }
 
 func textResult(v any) (*mcp.CallToolResult, any, error) {
@@ -143,6 +164,78 @@ func main() {
 			return nil, nil, err
 		}
 		return textResult(map[string]any{"path": rel, "outgoing": out, "incoming": inc})
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "write_note",
+		Description: "분류 규약에 맞춰 KB 에 노트 저장(Phase 1). type/domain 으로 dir 자동결정(또는 dir 명시), 파일명·frontmatter 자동생성, atomic write. 분류 모호 시 후보 dir 와 함께 ok:false 반환. redact 대상 dir 은 사내 식별자 발견 시 저장 거부.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in writeNoteInput) (*mcp.CallToolResult, any, error) {
+		// write 는 파일 stat/rename + 인덱스 갱신이 얽혀 있어 직렬화한다
+		// (동시 호출 시 exists 판정·쓰기 레이스 방지).
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		if strings.TrimSpace(in.Title) == "" && strings.TrimSpace(in.Slug) == "" {
+			return nil, nil, fmt.Errorf("title 또는 slug 가 필요합니다")
+		}
+		res, err := writer.Write(c, writer.Request{
+			Title: in.Title, Content: in.Content, Type: in.Type, Domain: in.Domain,
+			Dir: in.Dir, Tags: in.Tags, Status: in.Status, Slug: in.Slug,
+			Date: in.Date, Overwrite: in.Overwrite,
+		}, time.Now())
+		if err != nil {
+			var ce *writer.ClassifyError
+			var re *writer.RedactError
+			var ee *writer.ExistsError
+			switch {
+			case errors.As(err, &ce):
+				return textResult(map[string]any{"ok": false, "reason": "classify", "message": ce.Msg, "candidates": ce.Candidates})
+			case errors.As(err, &re):
+				return textResult(map[string]any{"ok": false, "reason": "redact", "dir": re.Dir, "matches": re.Matches, "message": re.Error()})
+			case errors.As(err, &ee):
+				return textResult(map[string]any{"ok": false, "reason": "exists", "path": ee.Path, "message": ee.Error()})
+			default:
+				return nil, nil, err
+			}
+		}
+
+		// 인덱스 증분 갱신 (차단/사적 경로는 인덱스에서 제외 유지)
+		indexed := false
+		indexErr := ""
+		private := boundary.IsPrivateDir(res.Path, c)
+		if !private {
+			abs := filepath.Join(c.KB.Root, res.Path)
+			raw, rerr := os.ReadFile(abs)
+			if rerr != nil {
+				indexErr = "read: " + rerr.Error()
+			} else {
+				note, fm := frontmatter.Parse(string(raw), res.Path, time.Now().UnixMilli(), c)
+				if boundary.IsPrivateByFrontmatter(fm, c) {
+					private = true
+				} else if derr := db.DeletePath(res.Path); derr != nil {
+					indexErr = "delete: " + derr.Error()
+				} else if uerr := db.Upsert(note); uerr != nil {
+					indexErr = "upsert: " + uerr.Error()
+				} else {
+					indexed = true
+				}
+			}
+		}
+
+		warn := ""
+		if private {
+			warn = "차단/사적 경로에 저장됨 — 인덱스/검색에서 제외(push 허용)."
+		}
+		if indexErr != "" {
+			warn = strings.TrimSpace(warn + " 인덱스 갱신 실패(" + indexErr + ") — reindex 로 복구 가능.")
+		}
+		if res.RedactScanned && len(c.Redact.Patterns) == 0 {
+			warn = strings.TrimSpace(warn + " redact 대상 dir 이나 redact.patterns 가 비어 스캔이 사실상 비활성입니다.")
+		}
+		return textResult(map[string]any{
+			"ok": true, "path": res.Path, "dir": res.Dir, "file": res.File,
+			"type": res.Type, "ai_access": res.AIAccess, "indexed": indexed,
+			"private": private, "warning": warn,
+		})
 	})
 
 	log.Println("grimoire: stdio MCP 서버 시작")

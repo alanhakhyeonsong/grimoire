@@ -60,6 +60,10 @@ type Config struct {
 		Host    string `json:"host"`
 		Model   string `json:"model"`
 	} `json:"ollama"`
+
+	Redact struct {
+		Patterns []string `json:"patterns"`
+	} `json:"redact"`
 }
 
 func expandTilde(p string) string {

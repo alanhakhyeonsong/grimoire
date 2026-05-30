@@ -47,8 +47,16 @@ func Open(indexDir string) (*DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := sdb.Exec("PRAGMA journal_mode = WAL"); err != nil {
-		return nil, err
+	// 단일 연결로 직렬화: database/sql 의 연결 풀이 WAL 하에서 다중 연결로
+	// 쓰기 경합 시 SQLITE_BUSY(database is locked)를 일으키는 것을 막는다.
+	sdb.SetMaxOpenConns(1)
+	for _, pragma := range []string{
+		"PRAGMA journal_mode = WAL",
+		"PRAGMA busy_timeout = 5000",
+	} {
+		if _, err := sdb.Exec(pragma); err != nil {
+			return nil, err
+		}
 	}
 	d := &DB{sql: sdb}
 	if err := d.init(); err != nil {
@@ -95,6 +103,25 @@ func (d *DB) Upsert(n frontmatter.Note) error {
 	}
 	for _, dst := range n.Links {
 		if _, err := d.sql.Exec(`INSERT INTO links (src,dst) VALUES (?,?)`, n.Path, dst); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// DeletePath 는 단일 노트의 인덱스 흔적(notes/notes_fts/links)을 제거한다.
+// write_note 후 증분 갱신 시 FTS/links 중복 적재를 막기 위해 Upsert 전에 호출한다.
+func (d *DB) DeletePath(path string) error {
+	stmts := []struct {
+		q   string
+		arg string
+	}{
+		{`DELETE FROM notes WHERE path = ?`, path},
+		{`DELETE FROM notes_fts WHERE path = ?`, path},
+		{`DELETE FROM links WHERE src = ?`, path},
+	}
+	for _, s := range stmts {
+		if _, err := d.sql.Exec(s.q, s.arg); err != nil {
 			return err
 		}
 	}
