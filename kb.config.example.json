@@ -1,0 +1,75 @@
+{
+  "$comment": "Grimoire KB 설정 템플릿. 이 파일을 kb.config.json 으로 복사한 뒤 본인 환경에 맞게 수정한다. 실제 kb.config.json 은 gitignore 되며 커밋되지 않는다. 스키마 설명은 docs/design.md 참고.",
+
+  "kb": {
+    "name": "my-kb",
+    "root": "~/notes",
+    "$comment_root": "마크다운 KB 루트. '~' 와 '~/' 는 홈 디렉토리로 확장된다. 절대경로도 가능.",
+    "indexPath": ".grimoire/index",
+    "exclude": [
+      "**/assets/**",
+      "**/_TEMPLATE/**",
+      ".obsidian/**",
+      ".git/**",
+      ".grimoire/**",
+      "**/*.png",
+      "**/*.jpg",
+      "**/*.jpeg",
+      "**/*.pdf",
+      "**/*.pptx"
+    ]
+  },
+
+  "boundary": {
+    "$comment": "pull(검색/인덱싱/자동주입/컴파일) 차단, push(write)·명시 단건 read 허용. private_dirs 의 기본값은 코드 하드 가드로도 강제되며 config 로 해제할 수 없다(추가 차단만 가능).",
+    "private_dirs": ["private/journal", "private/career"],
+    "private_frontmatter": { "key": "ai_access", "deny_value": "private" },
+    "write_allowed_in_private": true,
+    "single_read_allowed_in_private": true
+  },
+
+  "frontmatter": {
+    "core": ["title", "date", "type", "tags", "status", "ai_access"],
+    "custom": "allow",
+    "defaults": { "ai_access": "shared", "status": "active" },
+    "enums": {
+      "type": ["analysis", "design", "guide", "runbook", "reflection", "blog", "reference", "log", "ops", "study", "talk", "note", "career"],
+      "status": ["draft", "active", "done", "archived"],
+      "ai_access": ["shared", "private"]
+    }
+  },
+
+  "taxonomy": {
+    "$comment": "디렉토리 카탈로그. 인덱싱 fallback(경로 -> 메타 추론)과 write_note(type/domain -> dir 역방향) 양쪽에 쓰인다. 아래는 예시이며 본인 KB 구조에 맞게 자유롭게 바꾼다.",
+    "directories": {
+      "docs":            { "type": "analysis",   "domain": "general", "naming": "date-compact", "tone": "report",     "ai_access": "shared" },
+      "guides":          { "type": "guide",      "domain": "ops",     "naming": "kebab",        "tone": "guide",      "ai_access": "shared" },
+      "projects":        { "type": "design",     "domain": "project", "naming": "kebab",        "tone": "design",     "ai_access": "shared", "nested": true },
+      "references":      { "type": "reference",  "domain": "external","naming": "kebab",        "tone": "report",     "ai_access": "shared" },
+      "blog":            { "type": "blog",       "domain": "blog",    "naming": "kebab",        "tone": "1st-person", "ai_access": "shared", "redact": true },
+      "misc":            { "type": "note",       "domain": "misc",    "naming": "kebab",        "tone": "free",       "ai_access": "shared" },
+
+      "private/journal": { "type": "reflection", "domain": "self",    "naming": "mixed",        "tone": "1st-person", "ai_access": "private" },
+      "private/career":  { "type": "career",     "domain": "career",  "naming": "kebab",        "tone": "1st-person", "ai_access": "private" }
+    },
+    "naming_patterns": {
+      "kebab": "<topic>-<detail>.md",
+      "date-compact": "<YYYYMMDD>-<title>.md",
+      "date-done": "<YYYY-MM-DD>-<title>-done.md",
+      "mixed": "kebab 또는 <YYYY-MM-DD>-<title>.md (디렉토리 기존 파일 우선 참조)"
+    }
+  },
+
+  "context_signals": {
+    "$comment": "cwd -> project 역매핑 신호원(선택). jump/zoxide/autojump 등 별칭->경로 레지스트리를 연동한다. 안 쓰면 enabled 를 false 로 두거나 본 블록을 비운다. jump_registry 는 '<별칭>' 파일에 절대경로 한 줄이 든 플랫 디렉토리를 가리킨다.",
+    "jump_registry": "~/.zsh-jump",
+    "cwd_project_mapping": false
+  },
+
+  "ollama": {
+    "$comment": "임베딩 아님. Phase 3 위키 컴파일러(백필 태깅/lint/요약) 옵션. 기본 비활성.",
+    "enabled": false,
+    "host": "http://localhost:11434",
+    "model": "qwen2.5"
+  }
+}

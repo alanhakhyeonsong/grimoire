@@ -1,0 +1,22 @@
+# 실제 KB 설정 (개인 경로/구조 포함). 템플릿 kb.config.example.json 만 커밋한다.
+/kb.config.json
+
+# 개인 핸드오프/계획 문서 (진행현황·내부 맥락 포함, 공개 제외)
+docs/plans/
+
+# 빌드 산출물
+/bin/
+
+# OMC 세션/상태 (재생성 가능)
+/.omc/
+docs/.omc/
+
+# Grimoire 인덱스 캐시 (KB 측 .grimoire/ 에 생성, 재생성 가능)
+.grimoire/
+
+# Go
+*.test
+*.out
+
+# OS
+.DS_Store
