@@ -64,7 +64,17 @@ type Config struct {
 	Redact struct {
 		Patterns []string `json:"patterns"`
 	} `json:"redact"`
+
+	Index struct {
+		// SyncIntervalSeconds 는 시작 시 1회 동기화에 더해 수행하는 주기 증분
+		// 동기화 간격(초)이다. 0/미설정 → 기본 defaultSyncIntervalSeconds,
+		// 음수 → 주기 동기화 비활성(시작 시 1회만).
+		SyncIntervalSeconds int `json:"sync_interval_seconds"`
+	} `json:"index"`
 }
+
+// defaultSyncIntervalSeconds 는 index.sync_interval_seconds 미설정 시 기본값이다.
+const defaultSyncIntervalSeconds = 60
 
 // ExpandTilde 는 선행 ~ 를 사용자 홈 디렉토리로 확장한다(컨텍스트 신호원 등에서 재사용).
 func ExpandTilde(p string) string { return expandTilde(p) }
@@ -104,6 +114,11 @@ func Load(path string) (*Config, error) {
 	}
 	if len(c.Taxonomy.Directories) == 0 {
 		return nil, fmt.Errorf("taxonomy.directories 설정이 없습니다")
+	}
+
+	// 0(미설정)만 기본값으로 채운다. 음수는 "주기 동기화 끔" 의도라 보존한다.
+	if c.Index.SyncIntervalSeconds == 0 {
+		c.Index.SyncIntervalSeconds = defaultSyncIntervalSeconds
 	}
 
 	return &c, nil

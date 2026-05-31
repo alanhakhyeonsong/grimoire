@@ -17,7 +17,7 @@ Grimoire는 사용자의 마크다운 KB 자체를 single source of truth로 둔
 
 1. 원본은 마크다운 KB. 별도 저장소에 복제하지 않는다.
 2. 임베딩 미사용. 검색 라우팅 주체는 Claude (Karpathy: "검색을 LLM에 위임하라"). 인덱스는 SQLite FTS5.
-3. AI 접근 경계 = pull 차단 / push 허용. 차단 경로(config `boundary.locked_dirs` 기본 + `private_dirs` 추가)는 검색/인덱싱/자동주입에서 제외하되 쓰기와 명시 단건 읽기는 허용한다.
+3. AI 접근 경계 = pull 차단 / push 허용. 차단 경로(config `boundary.locked_dirs`/`private_dirs` + 코드 하드 가드 `HardLockedDirs` + taxonomy 미등록 디렉토리 fail-safe)는 검색/인덱싱/자동주입에서 제외하되 쓰기와 명시 단건 읽기는 허용한다. **분류 미상(taxonomy 미등록 디렉토리)은 기본 차단(private)**이고, 노출은 노트 frontmatter `ai_access: shared` 명시(opt-in)로만 한다. `HardLockedDirs`는 config가 비거나 잘못 편집돼도 새지 않는 최후 안전망이다.
 4. 확장성 = 엔진 고정 + config 외재화(`kb.config.json`). 다른 유저는 config만 교체한다.
 5. frontmatter는 있으면 활용, 없으면 경로/제목/본문에서 추론(fallback), 점진 백필.
 
@@ -41,7 +41,7 @@ grimoire/
   kb.config.example.json  # KB 설정 템플릿 (kb.config.json 으로 복사; 실제 설정은 gitignore)
   README.md / docs/design.md
   cmd/
-    grimoire/           # stdio MCP 서버 (9 툴, 시작 시 mtime 증분 Sync)
+    grimoire/           # stdio MCP 서버 (9 툴, 시작 시 + 주기 mtime 증분 Sync)
     reindex/            # full 재인덱싱 CLI (검증/복구)
     grimoire-context/   # SessionStart 훅용 컨텍스트 주입 헬퍼 (선택)
     lint/               # 배치 건강검진 CLI (Ollama 불필요)
@@ -82,7 +82,7 @@ go build -o bin/lint             ./cmd/lint              # 건강검진 CLI (Oll
 ./bin/grimoire kb.config.json
 ```
 
-> 시작 인덱싱은 **mtime 기반 증분 동기화**다. 인덱스를 디스크에 보존하고 변경된 노트만 갱신(삭제 노트는 스윕 제거)하므로 시작 시간·idle 메모리를 절감한다. 전체 재색인이 필요하면 `reindex` CLI 를 쓴다.
+> 시작 인덱싱은 **mtime 기반 증분 동기화**다. 인덱스를 디스크에 보존하고 변경된 노트만 갱신(삭제 노트는 스윕 제거)하므로 시작 시간·idle 메모리를 절감한다. 시작 후에도 `index.sync_interval_seconds`(기본 60초) 주기로 백그라운드 증분 동기화가 돌아, Obsidian 등으로 세션 중 추가·수정·사적전환(`ai_access:private`)된 노트를 재시작 없이 반영한다(`write_note`와 같은 mutex로 직렬화; 음수 = 주기 동기화 비활성). 전체 재색인이 필요하면 `reindex` CLI 를 쓴다.
 
 ## Claude Code 등록
 

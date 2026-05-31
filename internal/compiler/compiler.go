@@ -226,7 +226,7 @@ type ApplyResult struct {
 // BuildFields 는 제안 + 파생 기본값으로 코어 frontmatter 후보를 만든다.
 // 값은 YAML 스칼라로 포맷된다. 실제 삽입은 Apply 가 "누락분만" 수행한다.
 func BuildFields(c *config.Config, rel string, p *Proposal) []Field {
-	meta, _ := frontmatter.DirMetaFor(rel, c)
+	meta, hasDir := frontmatter.DirMetaFor(rel, c)
 	name := strings.TrimSuffix(filepath.Base(rel), ".md")
 
 	var fields []Field
@@ -259,10 +259,15 @@ func BuildFields(c *config.Config, rel string, p *Proposal) []Field {
 	add("status", status)
 	access := meta.AIAccess
 	if access == "" {
-		access = c.Frontmatter.Defaults["ai_access"]
-	}
-	if access == "" {
-		access = "shared"
+		if hasDir {
+			access = c.Frontmatter.Defaults["ai_access"]
+			if access == "" {
+				access = "shared"
+			}
+		} else {
+			// taxonomy 미등록 dir = fail-safe: 백필로 shared 를 박지 않는다.
+			access = "private"
+		}
 	}
 	add("ai_access", access)
 	return fields

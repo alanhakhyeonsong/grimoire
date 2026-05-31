@@ -163,14 +163,18 @@ func main() {
 		if strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
 			return nil, nil, fmt.Errorf("잘못된 경로입니다: %s", in.Path)
 		}
-		isPrivate := boundary.IsPrivateDir(rel, c)
-		if isPrivate && !c.Boundary.SingleReadAllowedInPrivate {
-			return nil, nil, fmt.Errorf("차단 경로입니다(읽기 비허용): %s", rel)
-		}
 		abs := filepath.Join(c.KB.Root, rel)
 		data, err := os.ReadFile(abs)
 		if err != nil {
 			return nil, nil, fmt.Errorf("노트를 읽을 수 없습니다: %s", rel)
+		}
+		// 디렉토리 차단에 더해, 파일의 현재 ai_access(명시값 + 미등록 dir
+		// fail-safe 추론값)도 실시간 판정에 포함한다. 인덱스가 갱신되기 전이라도
+		// 사적 노트를 즉시 인지·경고하기 위함이다.
+		note, _ := frontmatter.Parse(string(data), rel, 0, c)
+		isPrivate := boundary.IsPrivateDir(rel, c) || boundary.IsPrivateAccess(note.AIAccess, c)
+		if isPrivate && !c.Boundary.SingleReadAllowedInPrivate {
+			return nil, nil, fmt.Errorf("차단 경로입니다(읽기 비허용): %s", rel)
 		}
 		result := map[string]any{"path": rel, "content": string(data)}
 		if isPrivate {
@@ -319,8 +323,8 @@ func main() {
 				if info, serr := os.Stat(abs); serr == nil {
 					mtime = info.ModTime().UnixMilli()
 				}
-				note, fm := frontmatter.Parse(string(raw), ar.Path, mtime, c)
-				if !boundary.IsPrivateByFrontmatter(fm, c) {
+				note, _ := frontmatter.Parse(string(raw), ar.Path, mtime, c)
+				if !boundary.IsPrivateAccess(note.AIAccess, c) {
 					_ = db.DeletePath(ar.Path)
 					_ = db.Upsert(note)
 				}
@@ -377,8 +381,8 @@ func main() {
 				if info, serr := os.Stat(abs); serr == nil {
 					mtime = info.ModTime().UnixMilli()
 				}
-				note, fm := frontmatter.Parse(string(raw), res.Path, mtime, c)
-				if boundary.IsPrivateByFrontmatter(fm, c) {
+				note, _ := frontmatter.Parse(string(raw), res.Path, mtime, c)
+				if boundary.IsPrivateAccess(note.AIAccess, c) {
 					private = true
 				} else if derr := db.DeletePath(res.Path); derr != nil {
 					indexErr = "delete: " + derr.Error()
@@ -406,6 +410,30 @@ func main() {
 			"private": private, "warning": warn,
 		})
 	})
+
+	// 주기 백그라운드 동기화: 시작 시 1회 Sync 에 더해, 세션 중 Obsidian 등으로
+	// 추가/수정/사적전환(ai_access:private)된 노트를 재시작 없이 반영한다.
+	// write_note 와 같은 writeMu 로 직렬화해 인덱스 갱신 레이스를 막는다.
+	// (음수 간격 = 비활성, 시작 시 1회만)
+	if c.Index.SyncIntervalSeconds > 0 {
+		interval := time.Duration(c.Index.SyncIntervalSeconds) * time.Second
+		go func() {
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			for range ticker.C {
+				writeMu.Lock()
+				st, serr := index.SyncWith(c, db)
+				writeMu.Unlock()
+				if serr != nil {
+					log.Printf("grimoire: 주기 동기화 실패: %v", serr)
+				} else if st.Updated+st.Deleted > 0 {
+					log.Printf("grimoire: 주기 동기화 (갱신 %d, 삭제 %d, 차단 %d 제외)",
+						st.Updated, st.Deleted, st.ExcludedPrivate)
+				}
+			}
+		}()
+		log.Printf("grimoire: 주기 동기화 활성 (%d초 간격)", c.Index.SyncIntervalSeconds)
+	}
 
 	log.Println("grimoire: stdio MCP 서버 시작")
 	if err := s.Run(context.Background(), &mcp.StdioTransport{}); err != nil {

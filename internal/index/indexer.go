@@ -86,10 +86,10 @@ func Reindex(c *config.Config) (Stats, *DB, error) {
 			return nil
 		}
 
-		note, fm := frontmatter.Parse(string(raw), rel, info.ModTime().UnixMilli(), c)
+		note, _ := frontmatter.Parse(string(raw), rel, info.ModTime().UnixMilli(), c)
 
-		// 3) frontmatter ai_access:private 오버라이드
-		if boundary.IsPrivateByFrontmatter(fm, c) {
+		// 3) ai_access:private 배제(명시값 + 미등록 dir fail-safe 추론값 동일 기준)
+		if boundary.IsPrivateAccess(note.AIAccess, c) {
 			st.ExcludedPrivate++
 			return nil
 		}
@@ -119,10 +119,20 @@ func Sync(c *config.Config) (Stats, *DB, error) {
 	if err != nil {
 		return Stats{}, nil, err
 	}
+	st, err := SyncWith(c, db)
+	return st, db, err
+}
+
+// SyncWith 는 이미 열린 DB 핸들로 증분 동기화를 수행한다(Sync 의 본체).
+// 시작 후 주기적 백그라운드 동기화가 같은 핸들을 재사용해, 세션 중
+// 추가/수정/사적전환된 노트를 재시작 없이 반영하기 위한 진입점이다.
+// 동시 호출은 호출측(예: write_note 와 같은 mutex)이 직렬화해야 한다.
+func SyncWith(c *config.Config, db *DB) (Stats, error) {
+	root := c.KB.Root
 
 	existing, err := db.PathMtimes()
 	if err != nil {
-		return Stats{}, db, err
+		return Stats{}, err
 	}
 	seen := make(map[string]bool, len(existing))
 
@@ -180,11 +190,11 @@ func Sync(c *config.Config) (Stats, *DB, error) {
 			st.ParseErrors++
 			return nil
 		}
-		note, fm := frontmatter.Parse(string(raw), rel, mtime, c)
+		note, _ := frontmatter.Parse(string(raw), rel, mtime, c)
 
-		// 3) frontmatter ai_access:private 오버라이드 → 인덱스에서 배제.
-		//    이전에 적재돼 있었다면(공유→사적 전환) 흔적을 제거한다.
-		if boundary.IsPrivateByFrontmatter(fm, c) {
+		// 3) ai_access:private 배제(명시값 + 미등록 dir fail-safe 추론값 동일 기준)
+		//    → 인덱스에서 배제. 이전에 적재돼 있었다면(공유→사적 전환) 흔적을 제거한다.
+		if boundary.IsPrivateAccess(note.AIAccess, c) {
 			if _, ok := existing[rel]; ok {
 				_ = db.DeletePath(rel)
 			}
@@ -220,5 +230,5 @@ func Sync(c *config.Config) (Stats, *DB, error) {
 	}
 
 	st.Indexed = db.Total()
-	return st, db, walkErr
+	return st, walkErr
 }

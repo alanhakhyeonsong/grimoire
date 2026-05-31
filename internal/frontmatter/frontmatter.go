@@ -159,6 +159,11 @@ func Parse(raw, rel string, mtime int64, c *config.Config) (Note, map[string]any
 	dirType, dirDomain, dirAccess := "note", "misc", ""
 	if hasDir {
 		dirType, dirDomain, dirAccess = dir.Type, dir.Domain, dir.AIAccess
+	} else {
+		// taxonomy 미등록 디렉토리 = 분류 미상. fail-safe 로 기본 private 취급한다.
+		// 새 폴더를 추가하며 ai_access 를 명시하지 않아도 검색/인덱스에 새지 않는다.
+		// 노출하려면 노트 frontmatter 에 ai_access: shared 를 명시(opt-in)한다.
+		dirAccess = "private"
 	}
 
 	tags := getTags(fm)
