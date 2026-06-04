@@ -35,14 +35,15 @@ type Note struct {
 }
 
 var (
-	dateRe = regexp.MustCompile(`(\d{4})[-_]?(\d{2})[-_]?(\d{2})`) // YYYYMMDD 또는 YYYY-MM-DD
-	ymRe   = regexp.MustCompile(`(\d{4})[-_](\d{2})`)             // YYYY-MM (구분자 필수)
-	fmRe   = regexp.MustCompile(`(?s)^---\r?\n(.*?)\r?\n---\r?\n?`)
-	h1Re   = regexp.MustCompile(`(?m)^#\s+(.+)$`)
-	linkRe = regexp.MustCompile(`\[\[([^\]]+)\]\]`)
-	codeRe = regexp.MustCompile("(?s)```.*?```")
-	headRe = regexp.MustCompile(`(?m)^#.*$`)
-	wsRe   = regexp.MustCompile(`\s+`)
+	dateRe       = regexp.MustCompile(`(\d{4})[-_]?(\d{2})[-_]?(\d{2})`) // YYYYMMDD 또는 YYYY-MM-DD
+	ymRe         = regexp.MustCompile(`(\d{4})[-_](\d{2})`)              // YYYY-MM (구분자 필수)
+	fmRe         = regexp.MustCompile(`(?s)^---\r?\n(.*?)\r?\n---\r?\n?`)
+	h1Re         = regexp.MustCompile(`(?m)^#\s+(.+)$`)
+	linkRe       = regexp.MustCompile(`\[\[([^\]]+)\]\]`)
+	codeRe       = regexp.MustCompile("(?s)```.*?```")
+	inlineCodeRe = regexp.MustCompile("`[^`\n]+`")
+	headRe       = regexp.MustCompile(`(?m)^#.*$`)
+	wsRe         = regexp.MustCompile(`\s+`)
 )
 
 // DirMetaFor 는 경로에 해당하는 디렉토리 메타를 반환한다(가장 긴 매칭 우선).
@@ -123,7 +124,11 @@ func buildSummary(body string) string {
 }
 
 func extractLinks(body string) []string {
-	ms := linkRe.FindAllStringSubmatch(body, -1)
+	// 코드블록(펜스 ```...``` / 인라인 `...`) 안의 [[ ]] 는 위키링크가 아니라
+	// bash `[[ -d $dir ]]` 같은 테스트 구문일 수 있으므로 제거 후 추출한다.
+	cleaned := codeRe.ReplaceAllString(body, "")
+	cleaned = inlineCodeRe.ReplaceAllString(cleaned, "")
+	ms := linkRe.FindAllStringSubmatch(cleaned, -1)
 	out := make([]string, 0, len(ms))
 	for _, m := range ms {
 		t := m[1]
