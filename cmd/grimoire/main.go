@@ -120,7 +120,7 @@ func main() {
 	log.Printf("grimoire: 동기화 완료 (총 %d건 / 갱신 %d, 변경없음 %d, 삭제 %d, 차단 %d 제외)",
 		st.Indexed, st.Updated, st.Unchanged, st.Deleted, st.ExcludedPrivate)
 
-	s := mcp.NewServer(&mcp.Implementation{Name: "grimoire", Version: "0.1.0"}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "grimoire", Version: "0.2.1"}, nil)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_index",
