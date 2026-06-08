@@ -21,6 +21,7 @@ import (
 var HardLockedDirs = []string{
 	"personal/career",
 	"personal/analysis",
+	"personal/diary",
 	"docs/career",
 }
 
