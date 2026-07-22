@@ -39,7 +39,7 @@ Grimoire는 사용자의 마크다운 KB 자체를 single source of truth로 둔
 ```
 grimoire/
   kb.config.example.json  # KB 설정 템플릿 (kb.config.json 으로 복사; 실제 설정은 gitignore)
-  README.md / docs/design.md
+  README.md / docs/design.md / docs/configuration.md  # 설명 / 설계배경 / 경로·스캐폴딩 가이드
   cmd/
     grimoire/           # stdio MCP 서버 (9 툴, 시작 시 + 주기 mtime 증분 Sync)
     reindex/            # full 재인덱싱 CLI (검증/복구)
@@ -62,9 +62,12 @@ grimoire/
 ```bash
 cp kb.config.example.json kb.config.json
 # kb.config.json 의 kb.root 를 본인 KB 경로로, taxonomy/boundary 를 본인 디렉토리 구조로 수정
+mkdir -p ~/memo   # KB 루트는 config.Load 가 존재만 검증(자동 생성 안 함) → 미리 생성
 ```
 
 실제 `kb.config.json` 은 개인 경로/구조를 담으므로 gitignore 된다. 저장소에는 제네릭 템플릿 `kb.config.example.json` 만 커밋된다. `~/memo` 등 작성자 환경에 특화된 디렉토리 규약은 어디까지나 예시이며, 사용자는 자신의 KB 구조를 config 로 정의한다.
+
+> **경로 지정·디렉토리 스캐폴딩 규칙 전문은 [docs/configuration.md](./docs/configuration.md) 참고.** KB 루트(`kb.root`)와 config 파일 경로(`GRIMOIRE_CONFIG`)의 두 계층 구분, taxonomy 폴더 선언 규칙, 미등록 디렉토리 fail-safe private, `HardLockedDirs` 이식 주의사항, 초기 셋업 절차를 코드 근거와 함께 정리했다.
 
 ## 빌드 / 실행
 
@@ -90,7 +93,7 @@ go build -o bin/lint             ./cmd/lint              # 건강검진 CLI (Oll
 claude mcp add grimoire -- ~/tools/grimoire/bin/grimoire ~/tools/grimoire/kb.config.json
 ```
 
-config 경로는 인자 또는 `GRIMOIRE_CONFIG` 환경변수로 지정한다.
+config **파일** 경로는 CLI 인자 또는 `GRIMOIRE_CONFIG` 환경변수로 지정한다(인자 우선). 노트 **루트**는 그 config 안 `kb.root` 로 지정한다 — 두 경로 계층의 차이는 [docs/configuration.md §2](./docs/configuration.md#2-두-개의-경로-계층-핵심-구분) 참고.
 
 ## MCP 툴
 
