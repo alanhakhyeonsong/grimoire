@@ -21,7 +21,8 @@
   },
 
   "boundary": {
-    "$comment": "pull(검색/인덱싱/자동주입/컴파일) 차단, push(write)·명시 단건 read 허용. locked_dirs=기본/항상 차단, private_dirs=추가 차단. 둘 다 시작 시 1회 로드되어 세션 중 무력화 불가(런타임 보호). 본인 KB 의 비공개 디렉토리로 교체한다. [중요] taxonomy 에 등록되지 않은 디렉토리는 fail-safe 로 기본 private(인덱스/검색 제외) 취급되며, 노출하려면 노트 frontmatter 에 ai_access: shared 를 명시해야 한다. 또한 internal/boundary/boundary.go 의 HardLockedDirs(코드 하드 가드)는 이 설정과 무관하게 항상 차단하는 최후 안전망이므로, 다른 KB 로 이식 시 그 상수도 함께 조정한다.",
+    "$comment": "pull(검색/인덱싱/자동주입/컴파일) 차단, push(write)·명시 단건 read 허용. hard_locked_dirs=최후 안전망(생략 시 기본값 적용, 빈 배열=끄기), locked_dirs=기본 차단, private_dirs=추가 차단. 모두 시작 시 1회 로드되어 세션 중 무력화 불가(런타임 보호). 본인 KB 의 비공개 디렉토리로 교체한다. [중요] taxonomy 에 등록되지 않은 디렉토리는 fail-safe 로 기본 private(인덱스/검색 제외) 취급되며, 노출하려면 노트 frontmatter 에 ai_access: shared 를 명시해야 한다. deny_value 를 비우면 이 fail-safe 와 ai_access 차단이 모두 꺼지므로 비우지 않는다.",
+    "hard_locked_dirs": ["private/journal", "private/career"],
     "locked_dirs": ["private/journal", "private/career"],
     "private_dirs": [],
     "private_frontmatter": { "key": "ai_access", "deny_value": "private" },
@@ -50,6 +51,7 @@
       "references":      { "type": "reference",  "domain": "external","naming": "kebab",        "tone": "report",     "ai_access": "shared" },
       "blog":            { "type": "blog",       "domain": "blog",    "naming": "kebab",        "tone": "1st-person", "ai_access": "shared", "redact": true },
       "misc":            { "type": "note",       "domain": "misc",    "naming": "kebab",        "tone": "free",       "ai_access": "shared" },
+      "study":           { "type": "study",      "domain": "study",   "naming": "kebab",        "tone": "study",      "ai_access": "shared", "nested": true },
 
       "private/journal": { "type": "reflection", "domain": "self",    "naming": "mixed",        "tone": "1st-person", "ai_access": "private" },
       "private/career":  { "type": "career",     "domain": "career",  "naming": "kebab",        "tone": "1st-person", "ai_access": "private" }
@@ -78,6 +80,18 @@
   "redact": {
     "$comment": "write_note 가 redact:true 인 dir(예: blog)에 저장할 때 본문/제목을 스캔할 정규식 목록. 하나라도 매칭되면 저장을 거부하고 매칭 목록을 돌려준다. 본인 환경의 사내 식별자(프로젝트 코드네임/클러스터명/내부 도메인 등)를 넣는다. 비우면 스캔 비활성.",
     "patterns": []
+  },
+
+  "study": {
+    "$comment": "new_study(학습노트 스캐폴딩) 설정. dir 생략 시 taxonomy 에서 type:study 인 디렉토리를 찾는다. lenses 는 모든 강의 요약이 반드시 거쳐야 하는 고정 관점이며, 생략하면 '개념 정의 / 실무 적용 / 운영과 성능' 기본값이 쓰인다. 본인 학습 목적에 맞게 교체한다.",
+    "dir": "study",
+    "notes_dir": "notes",
+    "deep_dive_dir": "deep-dive",
+    "lenses": [
+      { "name": "개념 정의", "detail": "강의에 나온 용어를 정확히 정의하고 예시로 고정한다. 정의가 흐리면 뒤가 다 흔들린다." },
+      { "name": "실무 적용", "detail": "내 일에서 어디에 쓰이는지 코드·설정·절차 수준으로 옮겨 적는다." },
+      { "name": "운영과 성능", "detail": "부하·장애·관측(metrics/logs/tracing) 관점에서 무엇이 달라지는지 본다." }
+    ]
   },
 
   "index": {

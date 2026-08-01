@@ -17,7 +17,7 @@ Grimoire는 사용자의 마크다운 KB 자체를 single source of truth로 둔
 
 1. 원본은 마크다운 KB. 별도 저장소에 복제하지 않는다.
 2. 임베딩 미사용. 검색 라우팅 주체는 Claude (Karpathy: "검색을 LLM에 위임하라"). 인덱스는 SQLite FTS5.
-3. AI 접근 경계 = pull 차단 / push 허용. 차단 경로(config `boundary.locked_dirs`/`private_dirs` + 코드 하드 가드 `HardLockedDirs` + taxonomy 미등록 디렉토리 fail-safe)는 검색/인덱싱/자동주입에서 제외하되 쓰기와 명시 단건 읽기는 허용한다. **분류 미상(taxonomy 미등록 디렉토리)은 기본 차단(private)**이고, 노출은 노트 frontmatter `ai_access: shared` 명시(opt-in)로만 한다. `HardLockedDirs`는 config가 비거나 잘못 편집돼도 새지 않는 최후 안전망이다.
+3. AI 접근 경계 = pull 차단 / push 허용. 차단 경로(`boundary.hard_locked_dirs` + `locked_dirs`/`private_dirs` + taxonomy 미등록 디렉토리 fail-safe)는 검색/인덱싱/자동주입에서 제외하되 쓰기와 명시 단건 읽기는 허용한다. **분류 미상(taxonomy 미등록 디렉토리)은 기본 차단(private)**이고, 노출은 노트 frontmatter `ai_access: shared` 명시(opt-in)로만 한다. `hard_locked_dirs`는 `locked_dirs`가 비거나 잘못 편집돼도 새지 않는 최후 안전망이며, 설정을 생략하면 기본값이 적용된다(다른 KB 로 이식할 때 소스를 고치지 않아도 된다). 설정은 서버 시작 시 1회만 로드되므로 세션 도중 차단을 무력화할 수 없다.
 4. 확장성 = 엔진 고정 + config 외재화(`kb.config.json`). 다른 유저는 config만 교체한다.
 5. frontmatter는 있으면 활용, 없으면 경로/제목/본문에서 추론(fallback), 점진 백필.
 
@@ -38,51 +38,86 @@ Grimoire는 사용자의 마크다운 KB 자체를 single source of truth로 둔
 
 ```
 grimoire/
+  Makefile                # setup / build / index / doctor / register
   kb.config.example.json  # KB 설정 템플릿 (kb.config.json 으로 복사; 실제 설정은 gitignore)
   README.md / docs/design.md / docs/configuration.md  # 설명 / 설계배경 / 경로·스캐폴딩 가이드
   cmd/
-    grimoire/           # stdio MCP 서버 (9 툴, 시작 시 + 주기 mtime 증분 Sync)
+    grimoire/           # stdio MCP 서버 (10 툴, 시작 시 + 주기 mtime 증분 Sync)
     reindex/            # full 재인덱싱 CLI (검증/복구)
     grimoire-context/   # SessionStart 훅용 컨텍스트 주입 헬퍼 (선택)
     lint/               # 배치 건강검진 CLI (Ollama 불필요)
+    grimoire-init/      # 기존 KB 를 훑어 kb.config.json 초안 생성
+    grimoire-doctor/    # 설정·커버리지 진단 ("왜 검색이 안 되는가")
   internal/
     config/             # kb.config.json 로딩·검증
     boundary/           # AI 접근 경계 가드 (pull 차단/push 허용)
     frontmatter/        # frontmatter 파싱 + fallback 추론
-    index/              # SQLite FTS5 인덱스 + 인덱서 (Reindex / Sync)
+    index/              # SQLite FTS5 인덱스 + 인덱서 (Reindex / Sync / 미분류 스캔)
     writer/             # write_note: 분류 역매핑·파일명·frontmatter·atomic write·redact
     contextsig/         # cwd → jump 레지스트리 역매핑 (project 추론)
     compiler/           # lint(구조검진) + suggest/apply(frontmatter 백필)
+    initcfg/            # KB 구조 → taxonomy 추론 (grimoire-init 엔진)
+    doctor/             # 설정 정합성 + 커버리지 진단
+    study/              # 학습노트 스캐폴딩 (new_study)
     ollama/             # 선택적 Ollama 클라이언트 (생성 전용, 기본 비활성)
   bin/                  # 빌드 산출물 (gitignore)
 ```
 
 ## 설정
 
+### 빠른 시작 (기존 KB 가 있다면)
+
+`grimoire-init` 이 KB 를 훑어 디렉토리 분류를 추론하고 config 초안을 만든다. taxonomy 를 손으로 다 적을 필요가 없다.
+
+```bash
+make setup KB=~/notes      # 스캔 → kb.config.json 초안 생성
+# 생성된 파일에서 boundary(공개/비공개)를 확인한 뒤
+make index                 # 인덱싱
+make register              # Claude Code 에 등록
+```
+
+분류는 실제 디렉토리 구조와 노트 frontmatter 에서 뽑아낸 **초안**이다. 특히 공개/비공개 판정은 이름 기반 추정이 섞이므로, 저장 전에 `⚠️ 공개 여부 확인 필요` 로 표시된 항목을 직접 확인해야 한다.
+
+```
+=== 분류 초안 ===
+  디렉토리                   type       naming        공개     건수
+  backend                    analysis   kebab         shared   46
+  personal/analysis          analysis   date-compact  PRIVATE  20
+  ...
+⚠️  공개 여부 확인 필요 (7곳). 추정이므로 그대로 믿지 마세요.
+```
+
+### 직접 작성
+
 ```bash
 cp kb.config.example.json kb.config.json
-# kb.config.json 의 kb.root 를 본인 KB 경로로, taxonomy/boundary 를 본인 디렉토리 구조로 수정
-mkdir -p ~/memo   # KB 루트는 config.Load 가 존재만 검증(자동 생성 안 함) → 미리 생성
+# kb.root 를 본인 KB 경로로, taxonomy/boundary 를 본인 디렉토리 구조로 수정
+mkdir -p ~/notes   # KB 루트는 config.Load 가 존재만 검증(자동 생성 안 함) → 미리 생성
 ```
+
+> **taxonomy 에 없는 디렉토리는 fail-safe 로 검색에서 빠진다.** 새 폴더를 만들었는데 검색이 안 된다면 십중팔구 등록을 빠뜨린 것이다. `make doctor` 가 그 디렉토리를 이름으로 지목해 준다.
 
 실제 `kb.config.json` 은 개인 경로/구조를 담으므로 gitignore 된다. 저장소에는 제네릭 템플릿 `kb.config.example.json` 만 커밋된다. `~/memo` 등 작성자 환경에 특화된 디렉토리 규약은 어디까지나 예시이며, 사용자는 자신의 KB 구조를 config 로 정의한다.
 
-> **경로 지정·디렉토리 스캐폴딩 규칙 전문은 [docs/configuration.md](./docs/configuration.md) 참고.** KB 루트(`kb.root`)와 config 파일 경로(`GRIMOIRE_CONFIG`)의 두 계층 구분, taxonomy 폴더 선언 규칙, 미등록 디렉토리 fail-safe private, `HardLockedDirs` 이식 주의사항, 초기 셋업 절차를 코드 근거와 함께 정리했다.
+> **경로 지정·디렉토리 스캐폴딩 규칙 전문은 [docs/configuration.md](./docs/configuration.md) 참고.** KB 루트(`kb.root`)와 config 파일 경로(`GRIMOIRE_CONFIG`)의 두 계층 구분, taxonomy 폴더 선언 규칙, 미등록 디렉토리 fail-safe private, 하드가드(`hard_locked_dirs`) 설정, 초기 셋업 절차를 코드 근거와 함께 정리했다.
 
 ## 빌드 / 실행
 
 ```bash
-# 빌드
-go build -o bin/grimoire         ./cmd/grimoire          # MCP 서버 (시작 시 증분 Sync)
-go build -o bin/reindex          ./cmd/reindex           # full 재인덱싱 CLI (검증/복구)
-go build -o bin/grimoire-context ./cmd/grimoire-context  # 세션시작 훅 헬퍼 (선택)
-go build -o bin/lint             ./cmd/lint              # 건강검진 CLI (Ollama 불필요)
+make build     # 모든 실행 파일 빌드 (bin/)
+make index     # full 재인덱싱 + 검증 통계 (인덱스 손상 시 복구 경로)
+make doctor    # 설정·커버리지 진단
+make lint      # KB 건강검진
+make check     # fmt + vet + test
+```
 
-# full 재인덱싱 + 검증 통계 출력 (인덱스 손상 시 복구 경로)
-./bin/reindex kb.config.json
+`make` 없이 직접 쓰려면:
 
-# MCP 서버 (stdio) 직접 실행 — 시작 시 mtime 기준 변경분만 동기화
-./bin/grimoire kb.config.json
+```bash
+go build -o bin/grimoire ./cmd/grimoire   # (각 cmd/ 별로 동일)
+
+./bin/reindex kb.config.json              # full 재인덱싱
+./bin/grimoire kb.config.json             # MCP 서버 (stdio)
 ```
 
 > 시작 인덱싱은 **mtime 기반 증분 동기화**다. 인덱스를 디스크에 보존하고 변경된 노트만 갱신(삭제 노트는 스윕 제거)하므로 시작 시간·idle 메모리를 절감한다. 시작 후에도 `index.sync_interval_seconds`(기본 60초) 주기로 백그라운드 증분 동기화가 돌아, Obsidian 등으로 세션 중 추가·수정·사적전환(`ai_access:private`)된 노트를 재시작 없이 반영한다(`write_note`와 같은 mutex로 직렬화; 음수 = 주기 동기화 비활성). 전체 재색인이 필요하면 `reindex` CLI 를 쓴다.
@@ -93,7 +128,7 @@ go build -o bin/lint             ./cmd/lint              # 건강검진 CLI (Oll
 claude mcp add grimoire -- ~/tools/grimoire/bin/grimoire ~/tools/grimoire/kb.config.json
 ```
 
-config **파일** 경로는 CLI 인자 또는 `GRIMOIRE_CONFIG` 환경변수로 지정한다(인자 우선). 노트 **루트**는 그 config 안 `kb.root` 로 지정한다 — 두 경로 계층의 차이는 [docs/configuration.md §2](./docs/configuration.md#2-두-개의-경로-계층-핵심-구분) 참고.
+config **파일** 경로는 CLI 인자 또는 `GRIMOIRE_CONFIG` 환경변수로 지정한다(인자 우선). 노트 **루트**는 그 config 안 `kb.root` 로 지정한다. 두 경로 계층의 차이는 [docs/configuration.md §2](./docs/configuration.md#2-두-개의-경로-계층-핵심-구분) 참고.
 
 ## MCP 툴
 
@@ -106,8 +141,9 @@ config **파일** 경로는 CLI 인자 또는 `GRIMOIRE_CONFIG` 환경변수로 
 | `write_note` | 분류규약 적용 저장(역매핑·frontmatter·atomic·redact) | 쓰기 허용 |
 | `get_context` | cwd→project 역추론 + 관련 런북·노트 후보 | 제외 |
 | `get_runbook` | 반복 절차(`type:runbook`) 반환 | 제외 |
-| `lint` | 건강검진(frontmatter 결손/dangling link) — Ollama 불필요 | 제외 |
+| `lint` | 건강검진(frontmatter 결손/dangling link/미분류 누락), Ollama 불필요 | 제외 |
 | `suggest_frontmatter` | Ollama frontmatter 백필 제안(apply 시 누락 키만 기록) | 제외/거부 |
+| `new_study` | 강의 학습노트 스캐폴딩(README + notes/ + deep-dive/) | 쓰기 허용 |
 
 ## 사용법 (워크플로우)
 
@@ -172,12 +208,66 @@ get_context({cwd:"/Users/you/projects/proj-a"})
   "command": "~/tools/grimoire/bin/grimoire-context ~/tools/grimoire/kb.config.json" } ] }
 ```
 
-### 5) 건강검진 & frontmatter 백필 (컴파일러)
+### 5) 학습노트: 강의 1개 = 디렉토리 1개 (new_study)
+
+학습 정리가 흐지부지되는 이유는 대개 의지가 아니라 구조다. 매번 폴더 구성과 적을 내용을 다시 정하다 보면 노트마다 형식이 달라지고 나중에 검색도 안 된다. `new_study` 는 같은 모양의 학습 공간을 한 번에 만든다.
+
+```
+"고성능 JPA 강의 학습노트 만들어줘. 인프런이고 섹션은 JDBC 기본, 커넥션 관리야"
+  → new_study({course:"고성능 JPA", platform:"인프런", sections:[...]})
+     → personal/study/고성능-jpa/
+          README.md      # 메타 + 고정 관점 + 섹션 체크리스트
+          notes/         # 강의 요약 (<NN-섹션>/<NN-강의>.md)
+          deep-dive/     # 강의 밖으로 직접 판 주제
+```
+
+규칙 두 가지가 핵심이다.
+
+- **강의 요약(`notes/`)과 직접 판 심화(`deep-dive/`)를 섞지 않는다.** 요약에 심화를 섞으면 나중에 "강의가 말한 것"과 "내가 판단한 것"이 구분되지 않는다.
+- **모든 요약은 고정 관점(렌즈)을 빠짐없이 거친다.** 강의가 짚지 않았으면 빈 칸 대신 "해당 없음" 사유를 남긴다.
+
+관점은 사람마다 다르므로 config 로 교체한다(미설정 시 정의 → 적용 → 운영 3단계가 기본):
+
+```jsonc
+"study": {
+  "dir": "personal/study",          // 생략 시 taxonomy 의 type:study 를 찾는다
+  "lenses": [
+    { "name": "개념 정의", "detail": "용어를 정확히 정의하고 예시로 고정한다." },
+    { "name": "실무 적용", "detail": "코드·설정·절차 수준으로 옮겨 적는다." },
+    { "name": "운영과 성능", "detail": "부하·장애·관측 관점에서 무엇이 달라지는지 본다." }
+  ]
+}
+```
+
+이미 있는 디렉토리는 덮어쓰지 않고 거부한다(기존 학습 기록 보호).
+
+### 6) 진단: 왜 내 문서가 검색되지 않는가 (doctor)
+
+가장 흔한 사고는 **새 폴더를 만들고 taxonomy 등록을 빠뜨리는 것**이다. 미등록 디렉토리는 fail-safe 로 private 취급되어 인덱스에서 조용히 빠지므로, 경고가 없으면 알아챌 방법이 없다.
+
+```bash
+make doctor
+```
+
+```
+=== 커버리지 (검색 가능한 문서) ===
+  마크다운 총계:        391
+  인덱싱됨:             287
+  제외(glob):           1
+  제외(차단·의도):      103     # locked_dirs 등, 정상 동작
+  제외(미분류·사고):    0       # taxonomy 미등록, 0 이어야 한다
+```
+
+doctor 가 잡는 것: 미등록 디렉토리(원인 경로를 이름으로 지목), taxonomy 경로 오타, `ai_access` 오타, enum 밖 값, `deny_value` 누락(사적 보호가 통째로 꺼진 상태), 인덱스와 설정의 불일치. 종료코드는 정상 0 / error 1 / 실행 실패 2 라 CI 에 걸 수 있다.
+
+`reindex` 와 MCP 서버 시작 시에도 같은 경고가 뜬다. 세션 중 새 폴더를 만들면 주기 동기화가 그 시점에 알린다.
+
+### 7) 건강검진 & frontmatter 백필 (컴파일러)
 
 KB가 커지면 frontmatter 결손·깨진 링크가 쌓인다. `lint`로 점검하고, 선택적으로 Ollama가 frontmatter를 제안한다.
 
 ```bash
-# 구조 건강검진 (Ollama 불필요) — frontmatter 결손/dangling link 보고
+# 구조 건강검진 (Ollama 불필요): frontmatter 결손/dangling link 보고
 ./bin/lint kb.config.json          # 상위 50건
 ./bin/lint kb.config.json --all    # 전체
 ```
@@ -204,7 +294,9 @@ KB가 커지면 frontmatter 결손·깨진 링크가 쌓인다. `lint`로 점검
 
 ## 현재 상태
 
-동작하는 기능: RAG-lite 4툴(`get_index`/`search`/`read_note`/`links`) + `write_note`(분류규약 저장) + 증분 인덱싱 + `get_context`/`get_runbook`(작업 경로·런북 라우팅) + `lint`/`suggest_frontmatter`(건강검진·Ollama 백필).
+동작하는 기능: RAG-lite 4툴(`get_index`/`search`/`read_note`/`links`) + `write_note`(분류규약 저장) + 증분 인덱싱 + `get_context`/`get_runbook`(작업 경로·런북 라우팅) + `lint`/`suggest_frontmatter`(건강검진·Ollama 백필) + `new_study`(학습노트 스캐폴딩).
+
+온보딩·운영 도구: `grimoire-init`(KB 스캔 → config 초안), `grimoire-doctor`(설정·커버리지 진단), Makefile(`setup`/`build`/`index`/`doctor`/`register`).
 
 향후(옵션): 문서가 수만 규모로 커지고 탐색형 질문이 잦아질 때 임베딩 레이어 추가.
 

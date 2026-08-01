@@ -65,11 +65,11 @@ func (c *Client) Available(ctx context.Context) bool {
 }
 
 type generateRequest struct {
-	Model  string  `json:"model"`
-	Prompt string  `json:"prompt"`
-	System string  `json:"system,omitempty"`
-	Stream bool    `json:"stream"`
-	Format string  `json:"format,omitempty"`
+	Model   string  `json:"model"`
+	Prompt  string  `json:"prompt"`
+	System  string  `json:"system,omitempty"`
+	Stream  bool    `json:"stream"`
+	Format  string  `json:"format,omitempty"`
 	Options options `json:"options,omitempty"`
 }
 
