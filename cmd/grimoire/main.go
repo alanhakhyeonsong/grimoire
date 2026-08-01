@@ -1,7 +1,7 @@
 // grimoire 는 stdio MCP 서버다.
 //
 // 툴: get_index / search / read_note / links / write_note / get_context /
-// get_runbook / lint / suggest_frontmatter.
+// get_runbook / lint / suggest_frontmatter / new_study.
 // 시작 시 KB 를 인덱싱하고 stdin/stdout 으로 MCP 프로토콜을 처리한다.
 // 주의: stdio 의 stdout 은 JSON-RPC 채널이므로 로깅은 stderr 로만 한다.
 package main
@@ -132,7 +132,7 @@ func main() {
 		st.Indexed, st.Updated, st.Unchanged, st.Deleted, st.ExcludedByPolicy)
 	warnUnclassified(st)
 
-	s := mcp.NewServer(&mcp.Implementation{Name: "grimoire", Version: "0.2.2"}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "grimoire", Version: "0.3.0"}, nil)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_index",
