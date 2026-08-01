@@ -32,6 +32,14 @@ type Note struct {
 	Mtime    int64
 	Inferred bool // frontmatter 가 없어 추론했는지
 	Links    []string
+
+	// Unclassified 는 이 노트가 taxonomy 미등록 디렉토리에 있는지를 뜻한다.
+	// 미등록 = fail-safe private 이므로 인덱스에서 배제되는데, 그 배제가
+	// "의도된 차단(locked_dirs / ai_access:private 명시)"인지 "분류 규약을
+	// 갱신하지 않아 생긴 사고"인지 호출측이 구분하려면 이 근거가 필요하다.
+	// (미등록이어도 frontmatter 에 ai_access: shared 를 명시하면 노출되므로
+	//  Unclassified 는 "배제됐다"가 아니라 "분류 미상"만을 뜻한다.)
+	Unclassified bool
 }
 
 var (
@@ -202,5 +210,7 @@ func Parse(raw, rel string, mtime int64, c *config.Config) (Note, map[string]any
 		Mtime:    mtime,
 		Inferred: !hasFm,
 		Links:    extractLinks(body),
+
+		Unclassified: !hasDir,
 	}, fm
 }

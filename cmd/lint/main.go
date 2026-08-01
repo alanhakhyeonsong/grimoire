@@ -4,7 +4,8 @@
 // 검진 전 증분 Sync 로 인덱스를 최신화한다.
 //
 // 사용: lint [config경로] [--all]
-//   --all : findings 전체 출력(기본은 상위 50건)
+//
+//	--all : findings 전체 출력(기본은 상위 50건)
 package main
 
 import (
@@ -53,9 +54,23 @@ func main() {
 	fmt.Printf("  frontmatter 없음:     %d\n", rep.NoFrontmatter)
 	fmt.Printf("  코어필드 누락(>=1):   %d\n", rep.MissingCoreFields)
 	fmt.Printf("  dangling wikilink:    %d\n", rep.DanglingLinks)
+	fmt.Printf("  미분류 누락(인덱스 밖): %d\n", rep.Unclassified.Files)
+
+	// 미분류는 인덱스 밖이라 findings 에 잡히지 않는다. 먼저 알린다.
+	if rep.Unclassified.Files > 0 {
+		fmt.Printf("\n⚠️  taxonomy 미등록 디렉토리 %d곳의 노트 %d건이 검색에서 빠져 있습니다.\n",
+			len(rep.Unclassified.Dirs), rep.Unclassified.Files)
+		for _, d := range rep.Unclassified.Dirs {
+			fmt.Printf("     - %s (%d건)\n", d, rep.Unclassified.ByDir[d])
+		}
+		fmt.Println("   → 공개: kb.config.json 의 taxonomy.directories 에 등록")
+		fmt.Println("   → 비공개 의도: boundary.locked_dirs 에 추가")
+	}
 
 	if len(rep.Findings) == 0 {
-		fmt.Println("\n✓ 지적사항 없음")
+		if rep.Unclassified.Files == 0 {
+			fmt.Println("\n✓ 지적사항 없음")
+		}
 		return
 	}
 	fmt.Printf("\n=== findings (%d건%s) ===\n", len(rep.Findings), map[bool]string{true: ", --all", false: ""}[limit == 0])

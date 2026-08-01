@@ -58,6 +58,11 @@ type LintReport struct {
 	MissingCoreFields int           `json:"missingCoreFields"`
 	DanglingLinks     int           `json:"danglingLinks"`
 	Findings          []LintFinding `json:"findings"`
+
+	// Unclassified 는 taxonomy 미등록이라 인덱스에 들어가지도 못한 노트다.
+	// 나머지 지표가 "인덱스 안"의 건강을 보는 반면 이것만 인덱스 밖을 본다.
+	// frontmatter 결손보다 심각하다(문서 자체가 검색되지 않는다).
+	Unclassified index.UnclassifiedScan `json:"unclassified"`
 }
 
 // Lint 는 인덱스의 모든 노트를 구조적으로 점검한다(생성형 모델 불필요).
@@ -89,6 +94,12 @@ func Lint(c *config.Config, db *index.DB, limit int) (*LintReport, error) {
 
 	core := coreFields(c)
 	rep := &LintReport{Notes: len(paths)}
+
+	// 인덱스 밖(미등록 디렉토리) 점검. 스캔 실패는 나머지 검진을 막지 않는다.
+	if scan, serr := index.ScanUnclassified(c); serr == nil {
+		rep.Unclassified = scan
+	}
+
 	for _, rel := range paths {
 		if boundary.IsPrivateDir(rel, c) {
 			continue // 안전망: 차단경로는 검진 대상에서도 제외

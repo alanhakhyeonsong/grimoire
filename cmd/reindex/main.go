@@ -37,9 +37,20 @@ func main() {
 
 	fmt.Println("=== 인덱싱 통계 ===")
 	fmt.Printf("  스캔: %d  인덱싱: %d  (%dms)\n", st.Scanned, st.Indexed, ms)
-	fmt.Printf("  제외(glob): %d  제외(차단경로): %d  파싱오류: %d\n", st.ExcludedGlob, st.ExcludedPrivate, st.ParseErrors)
+	fmt.Printf("  제외(glob): %d  제외(차단경로·의도): %d  파싱오류: %d\n", st.ExcludedGlob, st.ExcludedByPolicy, st.ParseErrors)
 	fmt.Printf("  frontmatter 추론(fallback): %d / %d\n", st.Inferred, st.Indexed)
 	fmt.Printf("  wikilinks: %d\n", db.LinkCount())
+
+	// 미분류 누락은 "정상 차단"과 성격이 다르다. 대개 새 폴더를 만들고 taxonomy 를
+	// 갱신하지 않아 생기며, 방치하면 해당 문서는 검색에서 조용히 사라진다.
+	if st.ExcludedUnclassified > 0 {
+		fmt.Printf("\n⚠️  미분류 누락: %d건이 taxonomy 미등록 디렉토리라 인덱스에서 빠졌습니다.\n", st.ExcludedUnclassified)
+		fmt.Println("   아래 디렉토리를 kb.config.json 의 taxonomy.directories 에 등록하면 검색에 잡힙니다.")
+		for _, d := range st.UnclassifiedDirs {
+			fmt.Printf("     - %s\n", d)
+		}
+		fmt.Println("   (의도된 비공개라면 등록 대신 boundary.locked_dirs 에 넣으세요.)")
+	}
 
 	fmt.Println("\n=== type 분포 ===")
 	tc, _ := db.TypeCounts()
