@@ -75,13 +75,22 @@ type getRunbookInput struct {
 }
 
 type newStudyInput struct {
-	Course     string   `json:"course" jsonschema:"강의/주제 제목. 학습 디렉토리와 README 제목이 된다"`
-	Slug       string   `json:"slug,omitempty" jsonschema:"디렉토리명(kebab). 생략 시 course 에서 생성"`
-	Platform   string   `json:"platform,omitempty" jsonschema:"인프런/Udemy/자가 학습 등"`
-	Instructor string   `json:"instructor,omitempty" jsonschema:"강사명"`
-	URL        string   `json:"url,omitempty" jsonschema:"강의 URL"`
-	Goal       string   `json:"goal,omitempty" jsonschema:"왜 듣는가, 무엇을 얻고 싶은가"`
-	Sections   []string `json:"sections,omitempty" jsonschema:"커리큘럼 섹션 목록(알고 있으면). 섹션 인덱스 체크리스트로 만든다"`
+	Topic string `json:"topic" jsonschema:"학습 주제/자료 제목. 학습 디렉토리와 README 제목이 된다"`
+	Kind  string `json:"kind,omitempty" jsonschema:"자료 종류: course(강의)/book(기술서적)/ai(AI 대화 기반)/docs(공식문서)/self(자가 탐구). 생략 시 self. 종류에 따라 메타 항목과 하위 구조가 달라진다"`
+	Slug  string `json:"slug,omitempty" jsonschema:"디렉토리명(kebab). 생략 시 topic 에서 생성"`
+
+	Source  string   `json:"source,omitempty" jsonschema:"출처. 강의=플랫폼, 책=출판사, ai=모델/도구, docs=문서명, self=참고한 것"`
+	Author  string   `json:"author,omitempty" jsonschema:"강사/저자(해당하는 경우)"`
+	URL     string   `json:"url,omitempty" jsonschema:"자료 URL"`
+	Version string   `json:"version,omitempty" jsonschema:"대상 버전(공식문서·도구 학습 시 중요)"`
+	Goal    string   `json:"goal,omitempty" jsonschema:"왜 배우는가, 무엇을 얻고 싶은가"`
+	Units   []string `json:"units,omitempty" jsonschema:"커리큘럼 단위 목록(알고 있으면). 강의=섹션, 책=장, 그 외=다룰 주제. 진행 체크리스트가 된다"`
+
+	// v0.3.0 필드명 하위호환. 신규 필드가 비었을 때만 쓰인다.
+	Course     string   `json:"course,omitempty" jsonschema:"(구) topic 과 동일"`
+	Platform   string   `json:"platform,omitempty" jsonschema:"(구) source 와 동일"`
+	Instructor string   `json:"instructor,omitempty" jsonschema:"(구) author 와 동일"`
+	Sections   []string `json:"sections,omitempty" jsonschema:"(구) units 와 동일"`
 }
 
 type writeNoteInput struct {
@@ -132,7 +141,7 @@ func main() {
 		st.Indexed, st.Updated, st.Unchanged, st.Deleted, st.ExcludedByPolicy)
 	warnUnclassified(st)
 
-	s := mcp.NewServer(&mcp.Implementation{Name: "grimoire", Version: "0.3.0"}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "grimoire", Version: "0.3.1"}, nil)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_index",
@@ -425,8 +434,9 @@ func main() {
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name: "new_study",
-		Description: "새 강의/주제의 학습노트 공간을 만든다. '강의 1개 = 디렉토리 1개' 규칙으로 " +
-			"README(메타·고정 관점·섹션 인덱스) + notes/(강의 요약) + deep-dive/(직접 판 심화)를 생성한다. " +
+		Description: "새 학습 주제의 노트 공간을 만든다. '주제 1개 = 디렉토리 1개' 규칙으로 " +
+			"README(메타·고정 관점·진행 체크리스트) + notes/(요약) + deep-dive/(직접 판 심화)를 생성한다. " +
+			"kind 로 자료 종류(강의/기술서적/AI 대화/공식문서/자가 탐구)를 지정하면 메타 항목과 하위 구조가 그에 맞게 바뀐다. " +
 			"모든 요약이 거쳐야 할 고정 관점은 config 의 study.lenses 로 정한다. 이미 있으면 덮지 않고 거부한다.",
 	}, func(_ context.Context, _ *mcp.CallToolRequest, in newStudyInput) (*mcp.CallToolResult, any, error) {
 		// 디렉토리 생성 + 인덱스 갱신이 얽히므로 write_note 와 같은 락으로 직렬화한다.
@@ -434,8 +444,12 @@ func main() {
 		defer writeMu.Unlock()
 
 		res, err := study.Scaffold(c, study.Request{
-			Course: in.Course, Slug: in.Slug, Platform: in.Platform,
-			Instructor: in.Instructor, URL: in.URL, Goal: in.Goal, Sections: in.Sections,
+			Topic: in.Topic, Kind: in.Kind, Slug: in.Slug,
+			Source: in.Source, Author: in.Author, URL: in.URL,
+			Version: in.Version, Goal: in.Goal, Units: in.Units,
+
+			Course: in.Course, Platform: in.Platform,
+			Instructor: in.Instructor, Sections: in.Sections,
 		}, time.Now())
 		if err != nil {
 			var ee *study.ExistsError
@@ -468,10 +482,10 @@ func main() {
 		}
 
 		return textResult(map[string]any{
-			"ok": true, "dir": res.Dir, "index": res.Index,
+			"ok": true, "dir": res.Dir, "index": res.Index, "kind": res.Kind,
 			"created": res.Created, "lenses": res.Lenses, "indexed": indexed,
-			"next": "강의를 들으며 " + res.Dir + "/notes/<NN-섹션>/<NN-강의>.md 를 채우세요. " +
-				"강의 밖으로 판 주제는 deep-dive/ 로 분리합니다.",
+			"next": "학습하며 " + res.Dir + "/notes/ 를 채우세요. 자료 범위를 넘어 " +
+				"직접 판 주제는 deep-dive/ 로 분리합니다. 자세한 구조는 " + res.Index + " 참고.",
 		})
 	})
 

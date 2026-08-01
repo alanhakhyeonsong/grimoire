@@ -21,7 +21,7 @@ type StudyLens struct {
 var DefaultLenses = []StudyLens{
 	{
 		Name:   "개념 정의",
-		Detail: "강의에 나온 용어를 정확히 정의하고 예시로 고정한다. 정의가 흐리면 뒤가 다 흔들린다.",
+		Detail: "배운 용어를 정확히 정의하고 예시로 고정한다. 정의가 흐리면 뒤가 다 흔들린다.",
 	},
 	{
 		Name:   "실무 적용",

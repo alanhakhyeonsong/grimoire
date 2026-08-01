@@ -145,9 +145,155 @@ func TestStudyDirAmbiguous(t *testing.T) {
 	}
 }
 
-func TestScaffoldRequiresCourse(t *testing.T) {
+func TestScaffoldRequiresTopic(t *testing.T) {
 	c := newCfg(t)
 	if _, err := study.Scaffold(c, study.Request{}, now); err == nil {
-		t.Fatal("course 없이 생성됨")
+		t.Fatal("topic 없이 생성됨")
+	}
+}
+
+// readIndex 는 생성된 README 본문을 돌려준다.
+func readIndex(t *testing.T, c *config.Config, res *study.Result) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(c.KB.Root, filepath.FromSlash(res.Index)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+// kind 미지정은 자가 학습이다. 강의가 아닌 학습이 더 흔하므로,
+// 쓰지도 않을 플랫폼·강사 칸이 붙어서는 안 된다.
+func TestScaffoldDefaultsToSelfStudy(t *testing.T) {
+	c := newCfg(t)
+	res, err := study.Scaffold(c, study.Request{Topic: "Valkey 클러스터 동작"}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Kind != "self" {
+		t.Errorf("기본 kind 가 self 가 아님: %s", res.Kind)
+	}
+	body := readIndex(t, c, res)
+	for _, unwanted := range []string{"**플랫폼**", "**강사**", "**출판사**", "**저자**"} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("자가 학습에 %s 칸이 붙음", unwanted)
+		}
+	}
+	if !strings.Contains(body, "자가 학습") {
+		t.Error("자료 종류가 표시되지 않음")
+	}
+}
+
+func TestScaffoldCourseKind(t *testing.T) {
+	c := newCfg(t)
+	res, err := study.Scaffold(c, study.Request{
+		Topic: "고성능 JPA", Kind: "course",
+		Source: "인프런", Author: "홍길동", Units: []string{"JDBC 기본"},
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := readIndex(t, c, res)
+	for _, want := range []string{"**플랫폼**: 인프런", "**강사**: 홍길동", "섹션 인덱스", "01 - JDBC 기본"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("강의 노트에 %q 가 없음", want)
+		}
+	}
+	// 강의는 섹션 → 강의 2단 구조를 쓴다.
+	if !strings.Contains(body, "notes/<NN-섹션>/<NN-강의>.md") {
+		t.Error("강의의 2단 구조 안내가 없음")
+	}
+}
+
+func TestScaffoldBookKind(t *testing.T) {
+	c := newCfg(t)
+	res, err := study.Scaffold(c, study.Request{
+		Topic: "High-Performance Java Persistence", Kind: "book",
+		Source: "Vlad Mihalcea", Author: "Vlad Mihalcea",
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := readIndex(t, c, res)
+	for _, want := range []string{"기술서적", "**출판사**", "**저자**", "목차", "notes/<NN-장>/<NN-절>.md"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("책 노트에 %q 가 없음", want)
+		}
+	}
+}
+
+// AI 학습은 검증이 본체다. 출처 확인 절이 없으면 틀린 답이 그대로 굳는다.
+func TestScaffoldAIKindHasVerificationSection(t *testing.T) {
+	c := newCfg(t)
+	res, err := study.Scaffold(c, study.Request{
+		Topic: "Raft 합의 알고리즘", Kind: "ai", Source: "Claude",
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := readIndex(t, c, res)
+	for _, want := range []string{"출처 확인", "미검증", "1차 자료", "그럴듯하게 틀릴 수 있다"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("AI 학습 노트에 %q 가 없음", want)
+		}
+	}
+	// 강사·출판사 같은 무관한 칸은 없어야 한다.
+	if strings.Contains(body, "**강사**") || strings.Contains(body, "**저자**") {
+		t.Error("AI 학습에 강사/저자 칸이 붙음")
+	}
+}
+
+// 문서는 버전이 곧 정확성이다.
+func TestScaffoldDocsKindShowsVersion(t *testing.T) {
+	c := newCfg(t)
+	res, err := study.Scaffold(c, study.Request{
+		Topic: "Kubernetes Gateway API", Kind: "docs", Version: "v1.2",
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := readIndex(t, c, res)
+	if !strings.Contains(body, "**대상 버전**: v1.2") {
+		t.Error("문서 학습에 대상 버전이 없음")
+	}
+	if !strings.Contains(body, "버전에 따라 달라진다") {
+		t.Error("버전 주의 문구가 없음")
+	}
+}
+
+// v0.3.0 필드명(course/platform/instructor/sections)으로 호출해도 동작해야 한다.
+func TestScaffoldLegacyFieldsStillWork(t *testing.T) {
+	c := newCfg(t)
+	res, err := study.Scaffold(c, study.Request{
+		Course: "레거시 호출", Platform: "인프런",
+		Instructor: "김강사", Sections: []string{"첫 섹션"},
+	}, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := readIndex(t, c, res)
+	if !strings.Contains(body, "# 레거시 호출") {
+		t.Error("course 필드가 topic 으로 접히지 않음")
+	}
+	if !strings.Contains(body, "인프런") || !strings.Contains(body, "김강사") {
+		t.Error("platform/instructor 가 반영되지 않음")
+	}
+	if !strings.Contains(body, "01 - 첫 섹션") {
+		t.Error("sections 가 units 로 접히지 않음")
+	}
+}
+
+func TestNormalizeKind(t *testing.T) {
+	cases := map[string]study.Kind{
+		"": study.KindSelf, "self": study.KindSelf, "알 수 없는 값": study.KindSelf,
+		"course": study.KindCourse, "강의": study.KindCourse,
+		"book": study.KindBook, "책": study.KindBook,
+		"ai": study.KindAI, "ChatGPT": study.KindAI,
+		"docs": study.KindDocs, "공식문서": study.KindDocs,
+	}
+	for in, want := range cases {
+		if got := study.NormalizeKind(in); got != want {
+			t.Errorf("NormalizeKind(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
