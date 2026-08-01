@@ -25,6 +25,7 @@ import (
 	"github.com/alanhakhyeonsong/grimoire/internal/frontmatter"
 	"github.com/alanhakhyeonsong/grimoire/internal/index"
 	"github.com/alanhakhyeonsong/grimoire/internal/ollama"
+	"github.com/alanhakhyeonsong/grimoire/internal/study"
 	"github.com/alanhakhyeonsong/grimoire/internal/writer"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -73,6 +74,16 @@ type getRunbookInput struct {
 	Limit int    `json:"limit,omitempty" jsonschema:"최대 결과 수(기본 20)"`
 }
 
+type newStudyInput struct {
+	Course     string   `json:"course" jsonschema:"강의/주제 제목. 학습 디렉토리와 README 제목이 된다"`
+	Slug       string   `json:"slug,omitempty" jsonschema:"디렉토리명(kebab). 생략 시 course 에서 생성"`
+	Platform   string   `json:"platform,omitempty" jsonschema:"인프런/Udemy/자가 학습 등"`
+	Instructor string   `json:"instructor,omitempty" jsonschema:"강사명"`
+	URL        string   `json:"url,omitempty" jsonschema:"강의 URL"`
+	Goal       string   `json:"goal,omitempty" jsonschema:"왜 듣는가, 무엇을 얻고 싶은가"`
+	Sections   []string `json:"sections,omitempty" jsonschema:"커리큘럼 섹션 목록(알고 있으면). 섹션 인덱스 체크리스트로 만든다"`
+}
+
 type writeNoteInput struct {
 	Title     string   `json:"title" jsonschema:"문서 제목(H1/frontmatter title)"`
 	Content   string   `json:"content" jsonschema:"마크다운 본문(frontmatter 제외; 엔진이 frontmatter 를 생성해 앞에 붙인다)"`
@@ -118,7 +129,8 @@ func main() {
 	}
 	defer db.Close()
 	log.Printf("grimoire: 동기화 완료 (총 %d건 / 갱신 %d, 변경없음 %d, 삭제 %d, 차단 %d 제외)",
-		st.Indexed, st.Updated, st.Unchanged, st.Deleted, st.ExcludedPrivate)
+		st.Indexed, st.Updated, st.Unchanged, st.Deleted, st.ExcludedByPolicy)
+	warnUnclassified(st)
 
 	s := mcp.NewServer(&mcp.Implementation{Name: "grimoire", Version: "0.2.2"}, nil)
 
@@ -411,6 +423,58 @@ func main() {
 		})
 	})
 
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "new_study",
+		Description: "새 강의/주제의 학습노트 공간을 만든다. '강의 1개 = 디렉토리 1개' 규칙으로 " +
+			"README(메타·고정 관점·섹션 인덱스) + notes/(강의 요약) + deep-dive/(직접 판 심화)를 생성한다. " +
+			"모든 요약이 거쳐야 할 고정 관점은 config 의 study.lenses 로 정한다. 이미 있으면 덮지 않고 거부한다.",
+	}, func(_ context.Context, _ *mcp.CallToolRequest, in newStudyInput) (*mcp.CallToolResult, any, error) {
+		// 디렉토리 생성 + 인덱스 갱신이 얽히므로 write_note 와 같은 락으로 직렬화한다.
+		writeMu.Lock()
+		defer writeMu.Unlock()
+
+		res, err := study.Scaffold(c, study.Request{
+			Course: in.Course, Slug: in.Slug, Platform: in.Platform,
+			Instructor: in.Instructor, URL: in.URL, Goal: in.Goal, Sections: in.Sections,
+		}, time.Now())
+		if err != nil {
+			var ee *study.ExistsError
+			if errors.As(err, &ee) {
+				return textResult(map[string]any{
+					"ok": false, "reason": "exists", "dir": ee.Dir,
+					"message": ee.Error() + " (이어서 쓰려면 그 디렉토리에 직접 노트를 추가하세요)",
+				})
+			}
+			return nil, nil, err
+		}
+
+		// 생성한 README 를 인덱스에 즉시 반영한다(차단 경로면 건너뛴다).
+		indexed := false
+		if !boundary.IsPrivateDir(res.Index, c) {
+			abs := filepath.Join(c.KB.Root, res.Index)
+			if raw, rerr := os.ReadFile(abs); rerr == nil {
+				mtime := time.Now().UnixMilli()
+				if info, serr := os.Stat(abs); serr == nil {
+					mtime = info.ModTime().UnixMilli()
+				}
+				note, _ := frontmatter.Parse(string(raw), res.Index, mtime, c)
+				if !boundary.IsPrivateAccess(note.AIAccess, c) {
+					_ = db.DeletePath(res.Index)
+					if uerr := db.Upsert(note); uerr == nil {
+						indexed = true
+					}
+				}
+			}
+		}
+
+		return textResult(map[string]any{
+			"ok": true, "dir": res.Dir, "index": res.Index,
+			"created": res.Created, "lenses": res.Lenses, "indexed": indexed,
+			"next": "강의를 들으며 " + res.Dir + "/notes/<NN-섹션>/<NN-강의>.md 를 채우세요. " +
+				"강의 밖으로 판 주제는 deep-dive/ 로 분리합니다.",
+		})
+	})
+
 	// 주기 백그라운드 동기화: 시작 시 1회 Sync 에 더해, 세션 중 Obsidian 등으로
 	// 추가/수정/사적전환(ai_access:private)된 노트를 재시작 없이 반영한다.
 	// write_note 와 같은 writeMu 로 직렬화해 인덱스 갱신 레이스를 막는다.
@@ -428,8 +492,10 @@ func main() {
 					log.Printf("grimoire: 주기 동기화 실패: %v", serr)
 				} else if st.Updated+st.Deleted > 0 {
 					log.Printf("grimoire: 주기 동기화 (갱신 %d, 삭제 %d, 차단 %d 제외)",
-						st.Updated, st.Deleted, st.ExcludedPrivate)
+						st.Updated, st.Deleted, st.ExcludedByPolicy)
 				}
+				// 세션 중 새로 만든 폴더가 미등록이면 그 시점에 알린다.
+				warnUnclassified(st)
 			}
 		}()
 		log.Printf("grimoire: 주기 동기화 활성 (%d초 간격)", c.Index.SyncIntervalSeconds)
@@ -439,4 +505,39 @@ func main() {
 	if err := s.Run(context.Background(), &mcp.StdioTransport{}); err != nil {
 		log.Fatalln("서버 종료:", err)
 	}
+}
+
+var (
+	warnedDirsMu sync.Mutex
+	warnedDirs   = map[string]bool{}
+)
+
+// warnUnclassified 는 taxonomy 미등록이라 인덱스에서 빠진 디렉토리를 경고한다.
+//
+// 정책상 차단(locked_dirs 등)은 정상 동작이라 알릴 필요가 없지만, 미분류 누락은
+// 대개 "새 폴더를 만들고 분류 규약을 갱신하지 않은" 사고다. 경고가 없으면 사용자는
+// 문서가 검색되지 않는 이유를 알 수 없다.
+// 같은 디렉토리를 주기 동기화마다 반복 출력하면 로그가 무의미해지므로,
+// 이번에 처음 관측한 디렉토리만 알린다(세션 중 새 폴더 생성 시점에 1회).
+func warnUnclassified(st index.Stats) {
+	if st.ExcludedUnclassified == 0 {
+		return
+	}
+	warnedDirsMu.Lock()
+	defer warnedDirsMu.Unlock()
+
+	fresh := make([]string, 0, len(st.UnclassifiedDirs))
+	for _, d := range st.UnclassifiedDirs {
+		if !warnedDirs[d] {
+			warnedDirs[d] = true
+			fresh = append(fresh, d)
+		}
+	}
+	if len(fresh) == 0 {
+		return
+	}
+	log.Printf("grimoire: [경고] 미분류 누락 %d건 — 아래 디렉토리가 taxonomy 미등록이라 검색에서 빠집니다: %s",
+		st.ExcludedUnclassified, strings.Join(fresh, ", "))
+	log.Printf("grimoire:   → 공개하려면 kb.config.json 의 taxonomy.directories 에 등록, " +
+		"의도된 비공개라면 boundary.locked_dirs 에 추가하세요.")
 }
