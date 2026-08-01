@@ -14,15 +14,34 @@ import (
 	"github.com/alanhakhyeonsong/grimoire/internal/config"
 )
 
-// HardLockedDirs 는 config 와 무관하게 항상 차단되는 최후 안전망이다.
-// kb.config.json 의 locked_dirs 가 비거나 오타로 빠져도 이 디렉토리들은
-// 인덱싱·검색·컴파일·자동주입에서 제외된다(명시 단건 read 만 경고와 함께 허용).
-// 다른 사용자/KB 로 이식할 때만 이 목록을 조정한다.
-var HardLockedDirs = []string{
+// DefaultHardLockedDirs 는 boundary.hard_locked_dirs 를 설정하지 않았을 때
+// 적용되는 기본 하드가드다.
+//
+// 이 목록은 작성자 KB(~/memo) 기준이라 다른 사용자에게는 대개 존재하지 않는
+// 경로다(없는 경로를 차단하는 것은 무해하다). 자신의 사적 폴더를 최후 안전망에
+// 넣으려면 소스를 고치지 말고 kb.config.json 의 boundary.hard_locked_dirs 에
+// 명시한다.
+var DefaultHardLockedDirs = []string{
 	"personal/career",
 	"personal/analysis",
 	"personal/diary",
 	"docs/career",
+}
+
+// HardLockedDirs 는 이 KB 에 적용할 하드가드 목록을 반환한다.
+//
+// config 에 hard_locked_dirs 키가 없으면 기본값을 쓰고(하위호환), 명시했다면
+// 그 값을 그대로 쓴다. 빈 배열(`[]`)을 명시하면 하드가드를 끄겠다는 사용자의
+// 명시적 선택으로 간주한다. 키 부재와 빈 배열을 구분하기 위해 nil 검사를 쓴다.
+//
+// 이 목록이 config 로 열려도 런타임 보호는 유지된다. 설정은 서버 시작 시 1회만
+// 로드되므로 세션 도중 차단을 무력화할 수 없다(위협 모델은 외부 침입자가 아니라
+// 세션 안 AI 의 자동 행동 통제다).
+func HardLockedDirs(c *config.Config) []string {
+	if c == nil || c.Boundary.HardLockedDirs == nil {
+		return DefaultHardLockedDirs
+	}
+	return c.Boundary.HardLockedDirs
 }
 
 func normalize(rel string) string {
@@ -43,7 +62,7 @@ func PrivateDirs(c *config.Config) []string {
 			out = append(out, d)
 		}
 	}
-	for _, d := range HardLockedDirs {
+	for _, d := range HardLockedDirs(c) {
 		add(d)
 	}
 	for _, d := range c.Boundary.LockedDirs {

@@ -58,6 +58,49 @@ func TestConfigLockedDirsMergeWithHardGuard(t *testing.T) {
 	}
 }
 
+// hard_locked_dirs 키를 생략하면 기본 하드가드가 그대로 적용돼야 한다(하위호환).
+func TestHardLockedDirsDefaultsWhenUnset(t *testing.T) {
+	c := cfgEmptyLocked()
+	if c.Boundary.HardLockedDirs != nil {
+		t.Fatal("전제 위반: 이 설정에는 hard_locked_dirs 가 없어야 한다")
+	}
+	if !boundary.IsPrivateDir("personal/career/x.md", c) {
+		t.Error("키 미설정 시 DefaultHardLockedDirs 가 적용되어야 함")
+	}
+}
+
+// 다른 사용자가 자기 사적 폴더를 소스 수정 없이 하드가드에 넣을 수 있어야 한다.
+func TestHardLockedDirsConfigOverride(t *testing.T) {
+	c := cfgEmptyLocked()
+	c.Boundary.HardLockedDirs = []string{"private/journal", "secrets"}
+
+	if !boundary.IsPrivateDir("private/journal/2026.md", c) {
+		t.Error("설정한 하드가드 경로가 차단되지 않음")
+	}
+	if !boundary.IsPrivateDir("secrets/keys.md", c) {
+		t.Error("설정한 하드가드 경로가 차단되지 않음")
+	}
+	// 명시했으면 작성자 개인 경로(기본값)는 더 이상 강제되지 않는다.
+	if boundary.IsPrivateDir("personal/career/x.md", c) {
+		t.Error("hard_locked_dirs 명시 시 기본값은 대체되어야 함")
+	}
+}
+
+// 빈 배열은 "하드가드를 끄겠다"는 사용자의 명시적 선택이다.
+func TestHardLockedDirsExplicitEmpty(t *testing.T) {
+	c := cfgEmptyLocked()
+	c.Boundary.HardLockedDirs = []string{}
+
+	if boundary.IsPrivateDir("personal/career/x.md", c) {
+		t.Error("빈 배열을 명시하면 하드가드가 없어야 함")
+	}
+	// 하드가드를 껐어도 config locked_dirs 는 정상 동작해야 한다.
+	c.Boundary.LockedDirs = []string{"private/journal"}
+	if !boundary.IsPrivateDir("private/journal/a.md", c) {
+		t.Error("하드가드를 꺼도 locked_dirs 는 유지되어야 함")
+	}
+}
+
 func TestIsPrivateAccess(t *testing.T) {
 	c := cfgEmptyLocked()
 	if !boundary.IsPrivateAccess("private", c) {
