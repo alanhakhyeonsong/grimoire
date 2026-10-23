@@ -11,6 +11,8 @@ body:
     id: role
     attributes:
       label: 역할
+      description: 해당하는 역할을 모두 골라 주세요.
+      multiple: true
       options:
         - 백엔드 개발
         - 프론트엔드 개발
