@@ -1,0 +1,73 @@
+title: "[후기] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Grimoire 사용 후기를 남겨 주셔서 감사합니다.
+        회사명, 사내 시스템 이름, 고객 정보 같은 식별 정보는 빼고 적어 주세요.
+        버그 제보는 Issues, 사용법 질문은 Q&A 카테고리를 이용해 주세요.
+
+  - type: dropdown
+    id: role
+    attributes:
+      label: 역할
+      options:
+        - 백엔드 개발
+        - 프론트엔드 개발
+        - DevOps / SRE
+        - PO / PM / 기획
+        - 데이터 / ML
+        - 학생 / 개인 학습
+        - 기타
+    validations:
+      required: true
+
+  - type: dropdown
+    id: period
+    attributes:
+      label: 사용 기간
+      options:
+        - 1주 미만
+        - 1주 ~ 1개월
+        - 1 ~ 3개월
+        - 3개월 이상
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: 어떤 문제를 풀려고 썼나요?
+      placeholder: 예) 메신저 검색이 약해서 지난 논의를 다시 찾기 어려웠다
+    validations:
+      required: true
+
+  - type: textarea
+    id: workflow
+    attributes:
+      label: 어떻게 쓰고 있나요?
+      description: 자주 쓰는 툴, KB 구성, 훅이나 스킬과의 연결 등 자유롭게 적어 주세요.
+      placeholder: 예) 대화 백업을 KB 에 두고 search 로 찾는다. 반복 절차는 런북으로 써 두고 get_runbook 으로 끌어 쓴다
+    validations:
+      required: true
+
+  - type: textarea
+    id: effect
+    attributes:
+      label: 무엇이 달라졌나요?
+      placeholder: 예) 같은 설명을 세션마다 반복하지 않게 됐다
+
+  - type: textarea
+    id: wish
+    attributes:
+      label: 아쉬운 점이나 바라는 기능
+      description: 선택 항목입니다. 구체적인 기능 제안은 Ideas 카테고리도 좋습니다.
+
+  - type: checkboxes
+    id: consent
+    attributes:
+      label: 확인
+      options:
+        - label: 식별 정보(회사명, 사내 시스템 이름, 개인정보)를 넣지 않았습니다.
+          required: true
+        - label: 이 후기를 docs/use-cases.md 에 사례로 요약해 실어도 좋습니다.

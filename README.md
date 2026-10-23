@@ -41,6 +41,8 @@ grimoire/
   Makefile                # setup / build / index / doctor / register
   kb.config.example.json  # KB 설정 템플릿 (kb.config.json 으로 복사; 실제 설정은 gitignore)
   README.md / docs/design.md / docs/configuration.md  # 설명 / 설계배경 / 경로·스캐폴딩 가이드
+  docs/use-cases.md       # 활용 사례
+  .github/DISCUSSION_TEMPLATE/  # Discussions 후기 양식
   cmd/
     grimoire/           # stdio MCP 서버 (10 툴, 시작 시 + 주기 mtime 증분 Sync)
     reindex/            # full 재인덱싱 CLI (검증/복구)
@@ -307,6 +309,28 @@ KB가 커지면 frontmatter 결손·깨진 링크가 쌓인다. `lint`로 점검
 - Ollama 미가동/비활성이면 `ok:false`로 graceful 처리(엔진의 나머지 기능은 정상).
 
 > 모델은 Ollama에 받아둔 아무 텍스트 생성 모델이면 된다. 백필은 짧은 JSON 분류라 경량 모델로 충분하다(예: `qwen3:8b`, `gemma3:4b`, `llama3.2:3b`). 임베딩이 아니다.
+
+## 활용 사례
+
+실제 사용자들이 Grimoire 로 푼 문제를 [docs/use-cases.md](./docs/use-cases.md) 에 모았다. 요약하면 이렇다.
+
+| 사례 | 한 줄 요약 |
+|---|---|
+| PO 업무 반자동화 | 메신저 검색이 약해 대화를 KB 로 백업하고, 반복 업무 초안을 과거 맥락으로 채운다 |
+| 노트 → 블로그 | 쌓인 노트를 글감으로 묶고, `redact` 디렉토리가 공개 글의 사내 식별자를 막는다 |
+| 런북 끌어쓰기 | 배포·클러스터 절차를 한 번 써 두고 세션마다 자동 주입한다 |
+| 업무 로그 → 회고 | 일정한 경로·frontmatter 규약 덕에 데일리 로그가 주간 회고로 바로 집계된다 |
+| 학습노트 | `new_study` 로 자료 종류별 같은 틀을 만들어 나중에도 검색된다 |
+
+## 사용 후기 남기기
+
+써 보셨다면 GitHub Discussions 의 **Show and tell** 카테고리에 후기를 남겨 주세요. 새 글을 열면 역할·사용 기간·풀려던 문제·사용 방식을 묻는 양식이 뜹니다.
+
+**[→ 후기 작성하기](https://github.com/alanhakhyeonsong/grimoire/discussions/new?category=show-and-tell)**
+
+- 회사명, 사내 시스템 이름, 개인정보 같은 식별 정보는 빼고 적어 주세요.
+- 양식에서 게재 동의에 체크하면, 요약해서 [활용 사례](./docs/use-cases.md)에 싣습니다.
+- 버그는 [Issues](https://github.com/alanhakhyeonsong/grimoire/issues), 사용법 질문은 Discussions 의 Q&A, 기능 제안은 Ideas 카테고리를 이용해 주세요.
 
 ## 현재 상태
 
