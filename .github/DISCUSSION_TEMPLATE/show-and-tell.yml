@@ -63,7 +63,7 @@ body:
     id: wish
     attributes:
       label: 아쉬운 점이나 바라는 기능
-      description: 선택 항목입니다. 구체적인 기능 제안은 Ideas 카테고리도 좋습니다.
+      description: 선택 항목입니다. 구체적인 기능 제안은 Issues 에 남겨 주셔도 좋습니다.
 
   - type: checkboxes
     id: consent

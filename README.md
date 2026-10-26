@@ -330,7 +330,7 @@ KB가 커지면 frontmatter 결손·깨진 링크가 쌓인다. `lint`로 점검
 
 - 회사명, 사내 시스템 이름, 개인정보 같은 식별 정보는 빼고 적어 주세요.
 - 양식에서 게재 동의에 체크하면, 요약해서 [활용 사례](./docs/use-cases.md)에 싣습니다.
-- 버그는 [Issues](https://github.com/alanhakhyeonsong/grimoire/issues), 사용법 질문은 Discussions 의 Q&A, 기능 제안은 Ideas 카테고리를 이용해 주세요.
+- 버그 제보와 기능 제안은 [Issues](https://github.com/alanhakhyeonsong/grimoire/issues), 사용법 질문은 Discussions 의 Q&A 를 이용해 주세요.
 
 ## 현재 상태
 
