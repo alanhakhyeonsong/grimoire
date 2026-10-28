@@ -1,6 +1,9 @@
 package index
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -299,7 +302,28 @@ func Reindex(c *config.Config) (Stats, *DB, error) {
 	})
 
 	tracker.finish(&st)
+	if walkErr == nil {
+		if err := db.SetMeta(parseFingerprintKey, parseFingerprint(c)); err != nil {
+			return st, db, err
+		}
+	}
 	return st, db, walkErr
+}
+
+const parseFingerprintKey = "parse_fingerprint"
+
+// parseFingerprint 는 frontmatter.Parse 판정(분류·ai_access)을 좌우하는 설정의 지문이다.
+//
+// 증분 Sync 는 mtime 이 같으면 파싱을 건너뛴다. 그런데 taxonomy 키를 지우면 파일은
+// 그대로여도 판정이 shared 에서 fail-safe private 으로 바뀐다. 지문 없이 mtime 만
+// 믿으면 그 노트가 인덱스에 남아 계속 검색된다. exclude 와 locked_dirs 는 단축
+// 경로보다 먼저 검사되므로 지문에 넣지 않는다.
+func parseFingerprint(c *config.Config) string {
+	b, _ := json.Marshal(struct {
+		Taxonomy, Frontmatter, PrivateFrontmatter any
+	}{c.Taxonomy, c.Frontmatter, c.Boundary.PrivateFrontmatter})
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
 }
 
 // Sync 는 mtime 기반 증분 동기화다. 기존 인덱스를 보존한 채
@@ -329,6 +353,14 @@ func SyncWith(c *config.Config, db *DB) (Stats, error) {
 		return Stats{}, err
 	}
 	seen := make(map[string]bool, len(existing))
+
+	// 판정 설정이 지난 동기화와 다르면 mtime 단축을 끄고 전부 다시 판정한다.
+	fp := parseFingerprint(c)
+	stored, err := db.GetMeta(parseFingerprintKey)
+	if err != nil {
+		return Stats{}, err
+	}
+	trustMtime := stored == fp
 
 	var st Stats
 	tracker := unclassifiedTracker{}
@@ -375,7 +407,7 @@ func SyncWith(c *config.Config, db *DB) (Stats, error) {
 		mtime := info.ModTime().UnixMilli()
 
 		// 변경 없음: mtime 일치 → 읽기·파싱 생략(증분 절감의 핵심)
-		if prev, ok := existing[rel]; ok && prev == mtime {
+		if prev, ok := existing[rel]; ok && trustMtime && prev == mtime {
 			seen[rel] = true
 			st.Unchanged++
 			return nil
@@ -427,5 +459,11 @@ func SyncWith(c *config.Config, db *DB) (Stats, error) {
 
 	tracker.finish(&st)
 	st.Indexed = db.Total()
+	// 전부 다시 판정한 경우에만 새 지문을 신뢰한다. 순회가 실패했다면 다음 동기화가 다시 판정한다.
+	if walkErr == nil && !trustMtime {
+		if err := db.SetMeta(parseFingerprintKey, fp); err != nil {
+			return st, err
+		}
+	}
 	return st, walkErr
 }

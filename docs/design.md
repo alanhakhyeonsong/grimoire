@@ -290,7 +290,7 @@ flowchart LR
 | `lint({limit?})` | 건강검진(frontmatter 결손/dangling link) — Ollama 불필요 | 제외 |
 | `suggest_frontmatter({path,apply?})` | Ollama frontmatter 백필 제안(apply 시 누락 키만 기록) | 제외/거부 |
 
-> 메모리 레버: 시작 시 전체 재인덱싱 대신 **mtime 기반 증분 동기화**(`index.Sync`)로 인덱스를 디스크에 보존하고 변경분만 갱신·삭제 스윕한다. full 재인덱싱은 `reindex` CLI(검증·복구)에 남는다. 세션시작 컨텍스트 주입은 `grimoire-context` 헬퍼 + `SessionStart` 훅(선택)으로 제공한다.
+> 메모리 레버: 시작 시 전체 재인덱싱 대신 **mtime 기반 증분 동기화**(`index.Sync`)로 인덱스를 디스크에 보존하고 변경분만 갱신·삭제 스윕한다. 단, taxonomy·frontmatter 처럼 노트 판정을 좌우하는 설정의 지문을 인덱스에 저장해 두고, 지문이 바뀌면 mtime 단축 없이 전부 다시 판정한다(지운 taxonomy 키의 노트가 인덱스에 남아 계속 검색되는 것을 막는다). full 재인덱싱은 `reindex` CLI(검증·복구)에 남는다. 세션시작 컨텍스트 주입은 `grimoire-context` 헬퍼 + `SessionStart` 훅(선택)으로 제공한다.
 
 > 컴파일러(옵션, `internal/compiler` + `internal/ollama`): `lint` 는 생성형 모델 없이 동작하는 구조 건강검진이다. `suggest_frontmatter` 는 `ollama.enabled=true` 일 때만 frontmatter 후보를 제안하며, `apply:true` 는 **기존 키를 절대 덮어쓰지 않고 누락 키만** 삽입한다(제안 → 검수 → 기록, §11). 차단 경로는 Ollama 에 전달하지도 수정하지도 않는다. 배치용 `lint` CLI 별도 제공.
 

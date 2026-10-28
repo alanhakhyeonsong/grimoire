@@ -76,7 +76,24 @@ func (d *DB) init() error {
 		CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
 			path UNINDEXED, title, tags, body, tokenize='unicode61'
 		);
+		CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 	`)
+	return err
+}
+
+// GetMeta 는 인덱스 메타값을 읽는다. 없으면 "" 다.
+func (d *DB) GetMeta(key string) (string, error) {
+	var v string
+	err := d.sql.QueryRow(`SELECT value FROM meta WHERE key = ?`, key).Scan(&v)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return v, err
+}
+
+// SetMeta 는 인덱스 메타값을 기록한다.
+func (d *DB) SetMeta(key, value string) error {
+	_, err := d.sql.Exec(`INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)`, key, value)
 	return err
 }
 
