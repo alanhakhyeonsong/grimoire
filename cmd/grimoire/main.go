@@ -142,7 +142,7 @@ func main() {
 	rememberUnclassified(st)
 	warnUnclassified(st)
 
-	s := mcp.NewServer(&mcp.Implementation{Name: "grimoire", Version: "0.3.1"}, nil)
+	s := mcp.NewServer(&mcp.Implementation{Name: "grimoire", Version: "0.3.2"}, nil)
 
 	mcp.AddTool(s, &mcp.Tool{
 		Name:        "get_index",
