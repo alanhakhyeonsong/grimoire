@@ -139,6 +139,7 @@ func main() {
 	defer db.Close()
 	log.Printf("grimoire: 동기화 완료 (총 %d건 / 갱신 %d, 변경없음 %d, 삭제 %d, 차단 %d 제외)",
 		st.Indexed, st.Updated, st.Unchanged, st.Deleted, st.ExcludedByPolicy)
+	rememberUnclassified(st)
 	warnUnclassified(st)
 
 	s := mcp.NewServer(&mcp.Implementation{Name: "grimoire", Version: "0.3.1"}, nil)
@@ -155,7 +156,7 @@ func main() {
 		if err != nil {
 			return nil, nil, err
 		}
-		return textResult(map[string]any{"count": len(entries), "notes": entries})
+		return textResult(withUnclassified(map[string]any{"count": len(entries), "notes": entries}))
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -173,7 +174,7 @@ func main() {
 		if err != nil {
 			return nil, nil, err
 		}
-		return textResult(map[string]any{"count": len(hits), "hits": hits})
+		return textResult(withUnclassified(map[string]any{"count": len(hits), "hits": hits}))
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -235,11 +236,11 @@ func main() {
 		} else if res.Enabled && hint == "" {
 			hint = "project 미추론 — 사용 가능한 런북 목록만 반환."
 		}
-		return textResult(map[string]any{
+		return textResult(withUnclassified(map[string]any{
 			"cwd": in.Cwd, "enabled": res.Enabled, "project": res.Project,
 			"projectPath": res.ProjectPath, "runbooks": runbooks, "notes": notes,
 			"hint": hint,
-		})
+		}))
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -509,6 +510,9 @@ func main() {
 						st.Updated, st.Deleted, st.ExcludedByPolicy)
 				}
 				// 세션 중 새로 만든 폴더가 미등록이면 그 시점에 알린다.
+				if serr == nil {
+					rememberUnclassified(st)
+				}
 				warnUnclassified(st)
 			}
 		}()
@@ -524,7 +528,31 @@ func main() {
 var (
 	warnedDirsMu sync.Mutex
 	warnedDirs   = map[string]bool{}
+
+	unclassifiedMu     sync.Mutex
+	unclassifiedNotice string
 )
+
+// rememberUnclassified 는 마지막 동기화의 미분류 누락 안내를 보관한다.
+// 미분류 노트는 인덱스에 들어가지 않아 매 동기화마다 다시 집계되므로,
+// 마지막 값이 곧 현재 상태다.
+func rememberUnclassified(st index.Stats) {
+	unclassifiedMu.Lock()
+	defer unclassifiedMu.Unlock()
+	unclassifiedNotice = index.UnclassifiedNotice(st.ExcludedUnclassified, st.UnclassifiedDirs)
+}
+
+// withUnclassified 는 검색·목차 응답에 미분류 누락 안내를 싣는다.
+// stderr 경고는 아무도 읽지 않으므로, 결과가 비거나 모자랄 때 Claude 가
+// "문서가 없다"고 단정하지 않고 원인을 사용자에게 전할 수 있게 한다.
+func withUnclassified(m map[string]any) map[string]any {
+	unclassifiedMu.Lock()
+	defer unclassifiedMu.Unlock()
+	if unclassifiedNotice != "" {
+		m["unclassified"] = unclassifiedNotice
+	}
+	return m
+}
 
 // warnUnclassified 는 taxonomy 미등록이라 인덱스에서 빠진 디렉토리를 경고한다.
 //

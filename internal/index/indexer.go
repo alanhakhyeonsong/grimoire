@@ -1,6 +1,7 @@
 package index
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path"
@@ -119,6 +120,24 @@ type UnclassifiedScan struct {
 	TotalMarkdown    int `json:"totalMarkdown"`    // KB 안의 .md 총수
 	ExcludedGlob     int `json:"excludedGlob"`     // kb.exclude 로 걸러진 수
 	ExcludedByPolicy int `json:"excludedByPolicy"` // 차단 경로 + ai_access:private 명시
+}
+
+// UnclassifiedNotice 는 미분류 누락을 조치 방법까지 담은 한 문단 안내로 만든다.
+//
+// MCP 서버의 stderr 로그는 사람도 Claude 도 보지 않으므로, 세션 시작 훅 출력과
+// 검색 응답처럼 실제로 읽히는 자리에 같은 문구를 싣는다. 누락이 없으면 "" 다.
+func UnclassifiedNotice(files int, dirs []string) string {
+	if files == 0 {
+		return ""
+	}
+	where := strings.Join(dirs, ", ")
+	if where == "" {
+		where = "KB 루트 직속 파일" // suggestDirKey 가 후보를 내지 못하는 경우
+	}
+	return fmt.Sprintf("taxonomy 미등록 디렉토리의 노트 %d건이 검색에서 빠져 있습니다: %s. "+
+		"공개하려면 kb.config.json 의 taxonomy.directories 에 등록하고, 비공개 의도라면 "+
+		"boundary.locked_dirs 에 추가하세요. 설정을 바꾼 뒤에는 MCP 를 다시 연결해야 반영됩니다.",
+		files, where)
 }
 
 // ScanUnclassified 는 인덱스와 무관하게 KB 를 훑어 미등록 디렉토리를 찾는다.

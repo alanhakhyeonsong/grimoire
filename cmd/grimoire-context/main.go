@@ -3,7 +3,9 @@
 // config 와 cwd 로 project 를 역추론하고, 관련 런북·노트 후보를 주입용
 // 마크다운으로 stdout 에 출력한다. Claude Code 의 SessionStart 훅이 이 출력을
 // additionalContext 로 주입하는 용도다(선택 기능). 매칭이 없으면 아무것도
-// 출력하지 않아 훅 노이즈를 만들지 않는다.
+// 출력하지 않아 훅 노이즈를 만들지 않는다. 단, taxonomy 미등록 디렉토리 때문에
+// 검색에서 빠진 노트가 있으면 매칭과 무관하게 경고를 먼저 출력한다. 이 사고는
+// lint/doctor 를 직접 돌리기 전에는 드러나지 않기 때문이다.
 //
 // 사용: grimoire-context [config경로] [cwd]
 //   - config 기본: ./kb.config.json (GRIMOIRE_CONFIG 환경변수도 인식)
@@ -44,6 +46,13 @@ func main() {
 	if err != nil {
 		// 조용히 종료: 훅이 설정 없이 호출돼도 세션을 방해하지 않는다.
 		return
+	}
+
+	// 미분류 노트는 인덱스에 없으므로 파일시스템을 직접 훑어야 보인다.
+	if scan, err := index.ScanUnclassified(c); err == nil {
+		if msg := index.UnclassifiedNotice(scan.Files, scan.Dirs); msg != "" {
+			fmt.Printf("## Grimoire 경고 — 검색에서 빠진 노트\n%s\n\n", msg)
+		}
 	}
 
 	res := contextsig.Resolve(c, cwd)

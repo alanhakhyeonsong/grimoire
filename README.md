@@ -202,7 +202,7 @@ get_context({cwd:"/Users/you/projects/proj-a"})
 
 #### (선택) 세션시작 자동 주입
 
-`bin/grimoire-context`를 Claude Code `SessionStart` 훅에 연결하면 세션 시작 시 현재 작업 경로의 런북·노트가 자동 주입된다. 매칭이 없으면 아무것도 출력하지 않는다.
+`bin/grimoire-context`를 Claude Code `SessionStart` 훅에 연결하면 세션 시작 시 현재 작업 경로의 런북·노트가 자동 주입된다. 매칭이 없으면 아무것도 출력하지 않는다. 단, taxonomy 미등록 디렉토리 때문에 검색에서 빠진 노트가 있으면 매칭과 무관하게 경고를 먼저 출력한다(6절).
 
 ```jsonc
 // ~/.claude/settings.json 의 hooks.SessionStart 에 그룹 추가
@@ -278,7 +278,11 @@ make doctor
 
 doctor 가 잡는 것: 미등록 디렉토리(원인 경로를 이름으로 지목), taxonomy 경로 오타, `ai_access` 오타, enum 밖 값, `deny_value` 누락(사적 보호가 통째로 꺼진 상태), 인덱스와 설정의 불일치. 종료코드는 정상 0 / error 1 / 실행 실패 2 라 CI 에 걸 수 있다.
 
-`reindex` 와 MCP 서버 시작 시에도 같은 경고가 뜬다. 세션 중 새 폴더를 만들면 주기 동기화가 그 시점에 알린다.
+doctor 를 직접 돌리지 않아도 알 수 있게, 미분류 누락은 실제로 읽히는 자리에 함께 실린다.
+
+- **세션 시작**: `SessionStart` 훅(`grimoire-context`)이 원인 디렉토리와 조치 방법을 출력한다.
+- **MCP 응답**: `search`·`get_index`·`get_context` 결과에 `unclassified` 필드가 붙는다. 검색 결과가 비어도 Claude 가 "문서가 없다"고 단정하지 않고 원인을 전할 수 있다. 세션 중 새 폴더를 만들면 주기 동기화 이후 응답부터 반영된다.
+- **로그**: `reindex` 와 MCP 서버 stderr 에도 같은 경고가 남는다.
 
 ### 7) 건강검진 & frontmatter 백필 (컴파일러)
 
